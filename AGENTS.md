@@ -41,18 +41,20 @@ clickhoused must remain pure BSL-1.0 code written for this project.
 - If any other third-party code ever seems necessary, **stop and ask the user first**.
 - The README must say the project is unofficial and not affiliated with ClickHouse, Inc. ("ClickHouse" is their trademark).
 
-## Planned layout
-
-The layout is planned, not created yet:
+## Layout
 
 ```
-source/clickhoused/      library (io/, compress/, protocol/, types/, connection.d, pool.d, ...)
-integration-tests/       shared integration test harness (dub subpackage)
+source/clickhoused/        library; package.d exists (version constants, clickhousedHasVibe).
+                           Planned: io/, compress/, protocol/, types/, connection.d, pool.d, ...
+integration-tests/         shared harness (dub subpackage `clickhoused:integration-tests`).
+                           Tests are listed in `allTests` in source/integrationtests/harness.d.
 integration-tests-phobos/  runner for thread mode
-integration-tests-vibe/    runner for fiber mode (depends on vibe-core)
-examples/                one dub subpackage per example
-bench/                   benchmarks
+integration-tests-vibe/    runner for fiber mode: depends on vibe-core and runs the tests inside a vibe task
+examples/                  (planned) one dub subpackage per example
+bench/                     (planned) benchmarks
 ```
+
+To add an integration test, write a `void function()` that throws on failure in an `integrationtests.*` module, and append it to `allTests`. Both runners then pick it up.
 
 Note: `.gitignore` currently ignores every `docs/` directory, which is dub's generated docs output. Don't put hand-written docs there until that entry is narrowed (a planned M0 task).
 
@@ -70,15 +72,19 @@ Note: `.gitignore` currently ignores every `docs/` directory, which is dub's gen
 
 The package recipe format is **`dub.json`**, matching the author's other packages (ddbc, hibernated). Don't use `dub.sdl`, and never the legacy name `package.json`. Each subpackage (`integration-tests*`, `examples/*`) gets its own `dub.json` in its directory, listed in the root `subPackages` array by path.
 
-These are the planned commands; update this section once `dub.json` exists.
-
 ```sh
-dub build                                     # library, thread mode only
-dub test                                      # unit tests (no server needed; MockTransport + golden bytes)
-dub run :integration-tests-phobos             # integration tests, threads   (needs a server)
-dub run :integration-tests-vibe               # integration tests, vibe.d fibers (needs a server)
-CLICKHOUSE_HOST=localhost:9000 dub run ...    # server address for integration tests
+dub build                                     # library, thread mode only (no dependencies)
+dub test                                      # unit tests (no server needed)
+dub run :integration-tests-phobos             # integration tests, threads
+dub run :integration-tests-vibe               # integration tests, vibe.d fibers (downloads vibe-core on first run)
+CLICKHOUSE_HOST=localhost:9000 dub run ...    # (planned) server address for integration tests
 ```
+
+Notes:
+- `vibe-core` is an **optional** dependency of the root package, so a plain `dub build` never includes it.
+- `dub.selections.json` files are git-ignored. A root `dub.selections.json` that lists vibe-core would silently enable vibe support in root builds, so never commit one.
+- The vibe runner keeps its own selections file in `integration-tests-vibe/`, which keeps the root build free of vibe.
+- vibe-core 2.14 prints many `@safe` deprecation warnings from its own sources under LDC 1.36. They come from vibe-core itself and are harmless.
 
 ## Related local repositories (read-only references)
 

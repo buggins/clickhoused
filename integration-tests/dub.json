@@ -1,0 +1,9 @@
+{
+    "name": "integration-tests",
+    "description": "Shared integration test harness for clickhoused, used by the Phobos and vibe.d runners",
+    "license": "BSL-1.0",
+    "targetType": "library",
+    "dependencies": {
+        "clickhoused": { "path": "../" }
+    }
+}

@@ -1,0 +1,9 @@
+{
+    "name": "integration-tests-phobos",
+    "description": "Runs the clickhoused integration tests with blocking Phobos sockets",
+    "license": "BSL-1.0",
+    "targetType": "executable",
+    "dependencies": {
+        "clickhoused:integration-tests": { "path": "../" }
+    }
+}
