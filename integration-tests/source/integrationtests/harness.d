@@ -13,6 +13,7 @@ import std.stdio : writefln, stderr;
 
 import integrationtests.basic;
 import integrationtests.compression;
+import integrationtests.concurrency;
 import integrationtests.insert;
 import integrationtests.server : serverConfigured;
 import integrationtests.smoke;
@@ -57,6 +58,8 @@ immutable TestCase[] allTests = [
     TestCase("insert with defaults", &testInsertDefaults, true),
     TestCase("insert errors", &testInsertErrors, true),
     TestCase("network compression", &testCompression, true),
+    TestCase("automatic I/O backend", &testIoBackendSelection, true),
+    TestCase("close() cancels the query", &testCloseCancelsQuery, true),
 ];
 
 /// Settings passed from the runner to the tests.
@@ -72,18 +75,18 @@ struct RunnerContext
 RunnerContext currentRunner;
 
 /++
-Runs all integration tests and prints a report.
+Runs all integration tests, plus `extraTests` from the runner, and prints a report.
 
 Returns: the number of failed tests.
 +/
-int runAllTests(RunnerContext runner)
+int runAllTests(RunnerContext runner, const TestCase[] extraTests = null)
 {
     currentRunner = runner;
     const withServer = serverConfigured();
     if (!withServer)
         writefln("[%s] CLICKHOUSE_HOST is not set: skipping tests that need a server", runner.name);
     int failures, skipped;
-    foreach (test; allTests)
+    foreach (test; allTests ~ extraTests)
     {
         if (test.needsServer && !withServer)
         {
@@ -108,6 +111,7 @@ int runAllTests(RunnerContext runner)
             stderr.writefln("[%s] FAIL  %s: %s", runner.name, test.name, e.msg);
         }
     }
-    writefln("[%s] %d test(s), %d failed, %d skipped", runner.name, allTests.length, failures, skipped);
+    writefln("[%s] %d test(s), %d failed, %d skipped", runner.name, allTests.length + extraTests.length, failures,
+            skipped);
     return failures;
 }

@@ -25,7 +25,7 @@ final class PhobosTransport : Transport
         this.socket = socket;
     }
 
-    override size_t read(ubyte[] buffer) @safe
+    override size_t read(scope ubyte[] buffer) @safe
     {
         for (;;)
         {
@@ -36,7 +36,7 @@ final class PhobosTransport : Transport
         }
     }
 
-    override void write(const(ubyte)[] data) @safe
+    override void write(scope const(ubyte)[] data) @safe
     {
         while (data.length)
         {
@@ -112,6 +112,11 @@ final class PhobosBackend : IoBackend
     override @property string name() const @safe pure nothrow
     {
         return "phobos";
+    }
+
+    /// Does nothing: threads are scheduled by the operating system.
+    override void yieldNow() @safe
+    {
     }
 
     /++
@@ -217,10 +222,10 @@ private string portString(ushort port) @safe pure
 
     assert(!client.dataAvailable);
     server.send([7]);
-    ubyte[1] reply;
+    auto reply = new ubyte[1];
     while (!client.dataAvailable)
     {
     }
-    assert(client.read(reply[]) == 1 && reply[0] == 7);
+    assert(client.read(reply) == 1 && reply[0] == 7);
     assert(client.connected);
 }

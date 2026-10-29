@@ -76,12 +76,15 @@ ubyte[] encodeFrame(scope const(ubyte)[] data, Compression method, int zstdLevel
         methodByte = methodLz4;
         break;
     case Compression.zstd:
+        // Nothing may follow the throw: frontend 2.105 warns about unreachable code
         version (ClickHousedZstd)
+        {
             payload = zstdCompress(data, zstdLevel);
+            methodByte = methodZstd;
+            break;
+        }
         else
             throw zstdNotAvailable();
-        methodByte = methodZstd;
-        break;
     }
     auto frame = new ubyte[checksumSize + headerSize + payload.length];
     frame[checksumSize] = methodByte;
@@ -170,7 +173,7 @@ final class CompressedInput : Transport
         return pos == frame.length;
     }
 
-    override size_t read(ubyte[] buffer) @safe
+    override size_t read(scope ubyte[] buffer) @safe
     {
         while (pos == frame.length)
         {
@@ -183,7 +186,7 @@ final class CompressedInput : Transport
         return n;
     }
 
-    override void write(const(ubyte)[] data) @safe
+    override void write(scope const(ubyte)[] data) @safe
     {
         throw new ClientException("CompressedInput is read-only");
     }
@@ -235,12 +238,12 @@ final class CompressedOutput : Transport
         this.zstdLevel = zstdLevel;
     }
 
-    override size_t read(ubyte[] buffer) @safe
+    override size_t read(scope ubyte[] buffer) @safe
     {
         throw new ClientException("CompressedOutput is write-only");
     }
 
-    override void write(const(ubyte)[] data) @safe
+    override void write(scope const(ubyte)[] data) @safe
     {
         if (data.length)
             target.writeBytes(encodeFrame(data, method, zstdLevel));

@@ -58,8 +58,9 @@ source/clickhoused/        library:
   settings.d               ConnectionOptions
   exception.d              ClickHouseException > ServerException / ClientException / ConnectionException / ProtocolException
   block.d                  Block, readBlock / writeBlock (native format)
-  io/                      transport.d (Transport interface), backend.d (IoMode, IoBackend),
-                           phobos.d (thread-mode sockets), buffer.d (BufferedReader/Writer, varint/LE/string), mock.d
+  io/                      transport.d (Transport interface), backend.d (IoMode, IoBackend, backendFor, inVibeTask),
+                           phobos.d (thread-mode sockets), vibecore.d (fiber-mode sockets, Have_vibe_core only),
+                           buffer.d (BufferedReader/Writer, varint/LE/string), mock.d
   protocol/                codes.d (packet codes, Revision constants), packets.d (Hello, Query, Exception, Progress, ...),
                            testserver.d (ScriptedServer: scripted mock server for unit tests, unittest builds only)
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn),
@@ -67,7 +68,7 @@ source/clickhoused/        library:
                            parser.d (type-name parser), package.d (imports all)
   compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
                            `zstd` configuration only), frame.d (Compression enum, frames, CompressedInput/Output)
-                           Planned: pool.d, io/vibe.d, ...
+                           Planned: pool.d, dsn.d, mapping.d, ...
 integration-tests/         shared harness (dub subpackage `clickhoused:integration-tests`).
                            Tests are listed in `allTests` in source/integrationtests/harness.d.
 integration-tests-phobos/  runner for thread mode
@@ -76,7 +77,9 @@ examples/                  (planned) one dub subpackage per example
 bench/                     (planned) benchmarks
 ```
 
-To add an integration test, write a `void function()` that throws on failure in an `integrationtests.*` module, and append it to `allTests` (set `needsServer` if it talks to ClickHouse). Both runners then pick it up. Server tests use `connectToServer()` from `integrationtests.server`, and the `firstBlock()` helper in `integrationtests.basic`.
+To add an integration test, write a `void function()` that throws on failure in an `integrationtests.*` module, and append it to `allTests` (set `needsServer` if it talks to ClickHouse). Mode-specific tests are registered by the runners:
+- `threadTests` in `integration-tests-phobos/source/app.d`;
+- `vibeTests` in `integration-tests-vibe/source/vibetests.d` (these may import vibe-core). Both runners then pick it up. Server tests use `connectToServer()` from `integrationtests.server`, and the `firstBlock()` helper in `integrationtests.basic`.
 
 The root `/docs/` folder is generated API documentation (`dub build -b docs`) and is git-ignored. Hand-written documentation goes to `doc/`.
 
@@ -92,6 +95,8 @@ Other files:
 
 - WSL2 Linux. The compiler is **LDC 1.36.0** (`ldc2`, frontend 2.106); **DMD is not installed**. DUB 1.36.0.
 - The target minimum D frontend is 2.105. Don't use language or Phobos features newer than that without the user's agreement.
+  - Frontend 2.105 warns about things newer compilers accept, notably unreachable statements after a `throw` in a `version`/`else` branch, and dub turns warnings into errors.
+  - Before pushing, build and test with LDC 1.35.0: download `https://github.com/ldc-developers/ldc/releases/download/v1.35.0/ldc2-1.35.0-linux-x86_64.tar.xz` into the scratchpad, then run dub with `--compiler=<path>/bin/ldc2`.
 - A **ClickHouse 26.11 server runs locally**:
   - native protocol `localhost:9000`, HTTP `localhost:8123`;
   - user `default` with no password;
@@ -200,6 +205,15 @@ Don't modify any of these repositories unless the user explicitly asks.
   - Each block ends at a frame boundary, and `readDataBlock` checks this.
   - All client Data packets are compressed, including the empty end-of-data blocks. Use `Connection.blockReader`/`blockWriter`, `readDataBlock`, `writeEndOfData` and `flushBlock`; never write blocks to `writer` directly.
   - The server may send method NONE (`0x02`) frames even with compression on.
+- **Thread/fiber mode (M5a):**
+  - `IoMode.auto_` picks the vibe backend only inside a vibe.d task (`inVibeTask()`); `Connection.ioBackend` reports the choice.
+  - `VibeTransport` maps end of stream to `read() == 0`, timeouts to `ConnectionException`, and lets vibe's `InterruptException` propagate unchanged (the connection is then closed).
+  - A fiber-mode connection is bound to its thread; use from another thread throws `ClientException`.
+  - `yieldBetweenBlocks` calls `IoBackend.yieldNow()` after each received block.
+- **Cancel:**
+  - `Connection.cancel()` writes the 1-byte Cancel packet straight to the transport. It's safe from another thread/task while a result is being read, and refused during an insert.
+  - The server answers a cancel with `EndOfStream` and ignores a Cancel that arrives when no query is running.
+  - `QueryResult.close()` cancels and discards (server errors ignored); `QueryResult.drain()` reads to the end without cancelling. `exec()` uses `drain()`: never cancel a DDL statement.
 - **ZSTD** is optional. The `zstd` dub configuration defines `version (ClickHousedZstd)` and links `libzstd`. Test it with:
   - `dub test -c zstd`;
   - `CLICKHOUSE_COMPRESSION=zstd dub run :integration-tests-phobos --override-config=clickhoused/zstd`.

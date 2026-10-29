@@ -22,14 +22,14 @@ interface Transport
     Returns: the number of bytes read, or 0 if the peer closed the stream.
     Throws: `clickhoused.exception.ConnectionException` on network errors and timeouts.
     +/
-    size_t read(ubyte[] buffer) @safe;
+    size_t read(scope ubyte[] buffer) @safe;
 
     /++
     Writes all of `data`, blocking until it has been handed to the network.
 
     Throws: `clickhoused.exception.ConnectionException` on network errors and timeouts.
     +/
-    void write(const(ubyte)[] data) @safe;
+    void write(scope const(ubyte)[] data) @safe;
 
     /++
     Whether data from the server can be read without blocking (or the server

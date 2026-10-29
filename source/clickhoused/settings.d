@@ -53,6 +53,13 @@ struct ConnectionOptions
     TransportFactory transportFactory;
 
     /++
+    In fiber mode, let other tasks run after each block of a query result is
+    received, so a large result does not monopolize the event loop. No effect
+    in thread mode.
+    +/
+    bool yieldBetweenBlocks = true;
+
+    /++
     Settings sent with every query, e.g. `["max_threads": "4"]`.
 
     Unknown setting names are rejected by the server. Per-query settings

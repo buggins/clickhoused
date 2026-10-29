@@ -1,9 +1,9 @@
 /++
 I/O backend selection: thread mode (Phobos sockets) or fiber mode (vibe-core).
 
-An `IoBackend` provides everything that may block. In this version it only
-opens connections; locks, semaphores and sleeping will be added together with
-the connection pool.
+An `IoBackend` provides everything that may block. Fiber mode is available
+when vibe-core is in the application's dependency graph; dub then defines
+`version (Have_vibe_core)`.
 
 Copyright: Copyright © 2026, Vadim Lopatin
 License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
@@ -18,19 +18,20 @@ import clickhoused.io.transport : Transport;
 /// Which I/O backend a connection uses.
 enum IoMode
 {
-    /// Choose automatically. Currently always `phobos`; once fiber mode is
-    /// implemented, `vibe` will be chosen when running inside a vibe.d task.
+    /// Fiber mode when called inside a vibe.d task (and vibe-core is compiled
+    /// in), otherwise thread mode.
     auto_,
-    /// Blocking Phobos sockets, for ordinary threads.
+    /// Blocking Phobos sockets, for ordinary threads. Inside a vibe.d task this
+    /// blocks the whole event loop.
     phobos,
-    /// vibe-core sockets, for vibe.d fibers. Not implemented yet.
+    /// vibe-core sockets, for vibe.d tasks. Requires vibe-core.
     vibe,
 }
 
 /// Everything that may block, implemented for one concurrency model.
 interface IoBackend
 {
-    /// Short backend name, e.g. `"phobos"`.
+    /// Short backend name: `"phobos"` or `"vibe"`.
     @property string name() const @safe pure nothrow;
 
     /++
@@ -39,12 +40,37 @@ interface IoBackend
     Throws: `clickhoused.exception.ConnectionException` on failure or timeout.
     +/
     Transport connect(string host, ushort port, Duration timeout) @safe;
+
+    /// Lets other fibers run (fiber mode); does nothing in thread mode.
+    void yieldNow() @safe;
+}
+
+/// Whether fiber mode (vibe-core) is compiled in.
+version (Have_vibe_core)
+    private enum bool vibeCompiledIn = true;
+else
+    private enum bool vibeCompiledIn = false;
+
+/++
+Whether the caller runs inside a vibe.d task. Always false when vibe-core is
+not compiled in.
++/
+bool inVibeTask() @safe nothrow
+{
+    version (Have_vibe_core)
+    {
+        import clickhoused.io.vibecore : vibeInTask = inVibeTask;
+
+        return vibeInTask();
+    }
+    else
+        return false;
 }
 
 /++
 Returns the backend for `mode`.
 
-Throws: `ClientException` if `mode` is `IoMode.vibe`, which is not implemented yet.
+Throws: `ClientException` if `mode` is `IoMode.vibe` and vibe-core is not compiled in.
 +/
 IoBackend backendFor(IoMode mode) @safe
 {
@@ -53,10 +79,20 @@ IoBackend backendFor(IoMode mode) @safe
     final switch (mode)
     {
     case IoMode.auto_:
+        version (Have_vibe_core)
+        {
+            if (inVibeTask())
+                return vibeBackend();
+        }
+        return new PhobosBackend;
     case IoMode.phobos:
+        debug warnIfBlockingEventLoop();
         return new PhobosBackend;
     case IoMode.vibe:
-        throw new ClientException("IoMode.vibe is not implemented yet");
+        version (Have_vibe_core)
+            return vibeBackend();
+        else
+            throw new ClientException("IoMode.vibe needs vibe-core: add it to your project's dependencies");
     }
 }
 
@@ -65,6 +101,39 @@ IoBackend backendFor(IoMode mode) @safe
 {
     import std.exception : assertThrown;
 
+    assert(backendFor(IoMode.phobos).name == "phobos");
+    // Outside a vibe.d task, automatic selection uses thread mode
     assert(backendFor(IoMode.auto_).name == "phobos");
-    assertThrown!ClientException(backendFor(IoMode.vibe));
+    static if (!vibeCompiledIn)
+        assertThrown!ClientException(backendFor(IoMode.vibe));
+}
+
+version (Have_vibe_core)
+{
+    private IoBackend vibeBackend() @safe
+    {
+        import clickhoused.io.vibecore : VibeBackend;
+
+        return new VibeBackend;
+    }
+}
+
+/// Logs a warning (once per thread) when blocking sockets are requested inside a vibe.d task.
+private void warnIfBlockingEventLoop() @safe nothrow
+{
+    static bool warned;
+    if (warned || !inVibeTask())
+        return;
+    warned = true;
+    try
+    {
+        import std.logger : warning;
+
+        warning("clickhoused: IoMode.phobos is used inside a vibe.d task; blocking sockets stall the event loop. "
+                ~ "Use IoMode.auto_ or IoMode.vibe.");
+    }
+    catch (Exception)
+    {
+        // logging is best effort
+    }
 }

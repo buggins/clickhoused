@@ -24,10 +24,10 @@ import clickhoused.block : Block, readBlock, writeEmptyBlock;
 import clickhoused.compress.frame : CompressedInput, CompressedOutput, Compression, zstdAvailable;
 import clickhoused.exception;
 import clickhoused.insert : Inserter, quoteIdentifier;
-import clickhoused.io.backend : backendFor;
+import clickhoused.io.backend : IoBackend, backendFor;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
 import clickhoused.io.transport : Transport;
-import clickhoused.protocol.codes : Revision, ServerPacket;
+import clickhoused.protocol.codes : ClientPacket, Revision, ServerPacket;
 import clickhoused.protocol.packets;
 import clickhoused.settings : ConnectionOptions;
 
@@ -68,7 +68,10 @@ final class Connection
     }
 
     package ConnectionOptions options;
+    package IoBackend backend;
     package Transport transport;
+    /// An `Inserter` is sending data; `cancel` must not write then.
+    package bool insertActive;
     package BufferedReader reader;
     package BufferedWriter writer;
     /// Readers and writers for the data part of Data packets: the same as
@@ -140,6 +143,35 @@ final class Connection
     @property bool isBusy() const @safe pure nothrow
     {
         return state == State.busy;
+    }
+
+    /// Name of the I/O backend in use: `"phobos"` (thread mode) or `"vibe"` (fiber mode).
+    @property string ioBackend() const @safe pure nothrow
+    {
+        return backend.name;
+    }
+
+    /++
+    Asks the server to stop the running query. The result then ends early:
+    reading it further returns the blocks already in flight, then finishes.
+
+    This is the one method that may be called from another thread (thread mode)
+    or another task on the same thread (fiber mode) while a query result is
+    being read. It does nothing if no query is running.
+
+    Throws: `ClientException` during an INSERT (use `Inserter.abort`);
+    `ConnectionException` if the request cannot be sent.
+    +/
+    void cancel() @safe
+    {
+        if (state != State.busy)
+            return;
+        if (insertActive)
+            throw new ClientException("Cannot cancel an INSERT: use Inserter.abort");
+        // The Cancel packet is the single byte 0x03. It goes straight to the transport,
+        // bypassing the buffered writer, which is idle while a result is being read.
+        static immutable ubyte[1] packet = [cast(ubyte) ClientPacket.cancel];
+        transport.write(packet[]);
     }
 
     /// Closes the connection. Calling it more than once is allowed.
@@ -278,7 +310,7 @@ final class Connection
     QueryStats exec(string sql, const string[string] settings = null, const string[string] parameters = null) @safe
     {
         auto result = query(sql, settings, parameters);
-        result.close();
+        result.drain();
         return result.stats;
     }
 
@@ -376,9 +408,10 @@ final class Connection
         if (options.compression == Compression.zstd && !zstdAvailable)
             throw new ClientException("ZSTD compression is not compiled in: build clickhoused with the 'zstd' "
                     ~ "configuration, or use Compression.lz4");
+        backend = backendFor(options.ioMode);
         transport = options.transportFactory !is null
-            ? options.transportFactory(options.host, options.port, options.connectTimeout) : backendFor(
-                    options.ioMode).connect(options.host, options.port, options.connectTimeout);
+            ? options.transportFactory(options.host, options.port, options.connectTimeout) : backend.connect(
+                    options.host, options.port, options.connectTimeout);
         reader = new BufferedReader(transport);
         writer = new BufferedWriter(transport);
         if (compressionEnabled)
@@ -506,11 +539,36 @@ final class QueryResult
     }
 
     /++
-    Reads and discards the rest of the result, freeing the connection.
-
-    Throws: `ServerException` if the server reports an error in the remaining part.
+    Stops reading: cancels the query if it is still running, discards what the
+    server already sent, and frees the connection. Server errors in the
+    discarded part are ignored. Does nothing if the result is finished.
     +/
     void close() @safe
+    {
+        current = null;
+        if (finished)
+            return;
+        conn.cancel();
+        while (!finished)
+        {
+            current = null;
+            try
+                fetch();
+            catch (ServerException)
+            {
+                // the query is over; errors after a cancel do not matter
+            }
+        }
+        current = null;
+    }
+
+    /++
+    Reads and discards the rest of the result without cancelling the query,
+    waiting until the server has finished it (as `Connection.exec` does).
+
+    Throws: `ServerException` if the server reports an error.
+    +/
+    void drain() @safe
     {
         while (!finished)
         {
@@ -568,6 +626,8 @@ final class QueryResult
                 }
             }
         });
+        if (gotBlock && conn.options.yieldBetweenBlocks)
+            conn.backend.yieldNow();
         // Outside `guarded`: the stream is intact and the connection stays usable
         if (finished && insertWithoutData)
         {

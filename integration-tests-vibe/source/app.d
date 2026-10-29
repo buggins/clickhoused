@@ -5,19 +5,23 @@ import vibe.core.core : exitEventLoop, runEventLoop, runTask;
 
 import clickhoused : clickhousedHasVibe;
 import integrationtests.harness;
+import integrationtests.server : serverConfigured;
+import vibetests;
 
 static assert(clickhousedHasVibe, "clickhoused must be built with vibe-core support for this runner");
 
 int main()
 {
     int failures;
+    if (serverConfigured())
+        checkThreadModeOutsideTasks();
 
     void runTests() nothrow
     {
         scope (exit)
             exitEventLoop();
         try
-            failures = runAllTests(RunnerContext("vibe", true));
+            failures = runAllTests(RunnerContext("vibe", true), vibeTests);
         catch (Exception e)
             failures = 1;
     }

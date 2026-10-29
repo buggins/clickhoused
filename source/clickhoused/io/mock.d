@@ -46,7 +46,7 @@ final class MockTransport : Transport
         written = null;
     }
 
-    override size_t read(ubyte[] buffer) @safe
+    override size_t read(scope ubyte[] buffer) @safe
     {
         if (closed)
             throw new ConnectionException("Read from a closed transport");
@@ -60,7 +60,7 @@ final class MockTransport : Transport
         return n;
     }
 
-    override void write(const(ubyte)[] data) @safe
+    override void write(scope const(ubyte)[] data) @safe
     {
         if (closed)
             throw new ConnectionException("Write to a closed transport");

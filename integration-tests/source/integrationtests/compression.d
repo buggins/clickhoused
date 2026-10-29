@@ -25,14 +25,14 @@ final class CountingTransport : Transport
         this.inner = inner;
     }
 
-    override size_t read(ubyte[] buffer) @safe
+    override size_t read(scope ubyte[] buffer) @safe
     {
         const n = inner.read(buffer);
         bytesRead += n;
         return n;
     }
 
-    override void write(const(ubyte)[] data) @safe
+    override void write(scope const(ubyte)[] data) @safe
     {
         bytesWritten += data.length;
         inner.write(data);

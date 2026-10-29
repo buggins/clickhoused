@@ -75,6 +75,7 @@ final class Inserter
     package this(Connection conn) @safe
     {
         this.conn = conn;
+        conn.insertActive = true;
         auto r = conn.reader;
         bool acceptsNoData;
         conn.guarded({
@@ -257,6 +258,7 @@ final class Inserter
         {
             conn.close();
             finished = true;
+            conn.insertActive = false;
         }
     }
 
@@ -339,6 +341,7 @@ final class Inserter
     private void markFinished() @safe nothrow
     {
         finished = true;
+        conn.insertActive = false;
         if (conn.state == Connection.State.busy)
             conn.state = Connection.State.ready;
     }
