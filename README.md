@@ -14,7 +14,7 @@ A native [ClickHouse](https://clickhouse.com) client library for the [D programm
 
 Supports ClickHouse 23.8 and newer, and D compilers with frontend 2.097 or newer (DMD 2.097+, LDC 1.27+, GDC 12+).
 
-> **Status: 0.1.0, early release.** The API may still change before 1.0. TLS and composite types (Array, Tuple, Map) are not supported yet; see [Limitations](#limitations).
+> **Status: early release (0.1.x).** The API may still change before 1.0. TLS and composite types (Array, Tuple, Map) are not supported yet; see [Limitations](#limitations).
 
 ## Installation
 
