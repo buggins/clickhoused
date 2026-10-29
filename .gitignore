@@ -33,3 +33,5 @@ __dummy.html
 /integration-tests-vibe/clickhoused_integration-tests-vibe
 /integration-tests-phobos/integration-tests-phobos
 /integration-tests-vibe/integration-tests-vibe
+/examples/*/clickhoused_example-*
+/examples/*/example-*
