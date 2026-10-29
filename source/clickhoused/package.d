@@ -32,9 +32,9 @@ enum uint clickhousedVersionMajor = 0;
 /// ditto
 enum uint clickhousedVersionMinor = 1;
 /// ditto
-enum uint clickhousedVersionPatch = 1;
+enum uint clickhousedVersionPatch = 2;
 
-/// Library version as a string, e.g. `"0.1.1"`.
+/// Library version as a string, e.g. `"0.1.2"`.
 enum string clickhousedVersion = versionString(clickhousedVersionMajor,
             clickhousedVersionMinor, clickhousedVersionPatch);
 
@@ -65,7 +65,7 @@ private string versionString(uint major, uint minor, uint patch) pure @safe
 ///
 @safe unittest
 {
-    assert(clickhousedVersion == "0.1.1");
+    assert(clickhousedVersion == "0.1.2");
     assert(clickhousedClientName == "clickhoused");
 }
 

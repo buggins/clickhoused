@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
+## 0.1.2 — 2026-10-29
+
+### Changed
+- The optional vibe-core dependency now accepts vibe-core **1.22 and newer** (`>=1.22.0 <3.0.0`), not only 2.x. A project that pins vibe-core 1.x (such as ddbc's example) failed to resolve its dependencies as soon as clickhoused was in its dependency graph, even without using it.
+- CI runs the vibe.d integration tests against vibe-core 1.22.6 too (`:integration-tests-vibe1`).
+
 ## 0.1.1 — 2026-10-29
 
 ### Changed

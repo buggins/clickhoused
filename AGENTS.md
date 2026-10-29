@@ -77,6 +77,7 @@ integration-tests/         shared harness (dub subpackage `clickhoused:integrati
                            Tests are listed in `allTests` in source/integrationtests/harness.d.
 integration-tests-phobos/  runner for thread mode
 integration-tests-vibe/    runner for fiber mode: depends on vibe-core and runs the tests inside a vibe task
+integration-tests-vibe1/   the same fiber-mode tests against vibe-core 1.22.6 (sources shared with integration-tests-vibe)
 examples/                  dub subpackages: basic (`:example-basic`), vibe (`:example-vibe`); read CLICKHOUSE_DSN
 bench/                     (planned) benchmarks
 ```
@@ -233,6 +234,9 @@ Don't modify any of these repositories unless the user explicitly asks.
   - `readValue!T` is the read-side counterpart of `appendValue`.
   - A failed column binding closes the result, so the connection doesn't stay busy.
   - `insert(table, structs)` aborts (closes the connection) when a value doesn't fit.
+- **vibe-core versions:** the optional dependency accepts `>=1.22.0 <3.0.0`.
+  - Downstream projects (ddbc's example) pin vibe-core 1.x, and dub activates an optional dependency whenever the root has it, so a too-narrow range breaks *their* dependency resolution.
+  - `:integration-tests-vibe1` runs the vibe tests against vibe-core 1.22.6; `vibecore.d` must compile with both 1.x and 2.x.
 - **ZSTD** is optional. The `zstd` dub configuration defines `version (ClickHousedZstd)` and links `libzstd`. Test it with:
   - `dub test -c zstd`;
   - `CLICKHOUSE_COMPRESSION=zstd dub run :integration-tests-phobos --override-config=clickhoused/zstd`.

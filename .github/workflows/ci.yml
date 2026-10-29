@@ -98,6 +98,8 @@ jobs:
         run: dub run :integration-tests-phobos
       - name: Integration tests (vibe.d fibers)
         run: dub run :integration-tests-vibe
+      - name: Integration tests with vibe-core 1.x (vibe.d fibers)
+        run: dub run :integration-tests-vibe1
       - name: Unit tests with ZSTD
         run: dub test --config=zstd
       - name: Integration tests, LZ4 compression (threads)
