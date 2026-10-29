@@ -6,7 +6,7 @@ Guidance for AI coding agents working on **clickhoused**, a native D client libr
 
 - **What:** a pure-D client (connector) for ClickHouse over the **native TCP protocol** (port 9000; 9440 with TLS). It will be published on code.dlang.org as the dub package `clickhoused`. That name was confirmed free on 2026-10-29, and no other ClickHouse package exists on dub.
 - **Repo:** `git@github.com:buggins/clickhoused.git`, default branch `main`. The author is Vadim Lopatin (GitHub `buggins`), who also maintains ddbc.
-- **License:** BSL-1.0 (Boost), the proposed default.
+- **License:** BSL-1.0 (Boost), the same as Phobos, ddbc and mysql-native. This was decided on 2026-10-29. It could still change while the author is the sole contributor; see "Licensing rules" below.
 - **Status:** planning phase. Do not start implementation work unless the user asks for it.
 - **`PLAN.md` (local and optional):** the detailed design plan is kept as a local, untracked file. It is excluded through `.git/info/exclude` and is not part of the repository, so it may be missing in your checkout.
   - If it is present, read it before making design-level changes and keep it up to date when a design decision changes. Never `git add` it.
@@ -30,6 +30,16 @@ Guidance for AI coding agents working on **clickhoused**, a native D client libr
 5. **Revision-gated protocol fields:** every field that depends on the negotiated protocol revision must be guarded with an explicit `if (revision >= DBMS_MIN_...)` check. Verify each one against ClickHouse `src/Core/ProtocolDefines.h`. A mistake desynchronizes the stream silently.
 6. **ddbc compatibility (§7):** keep the dynamic per-cell access layer, the column metadata, `QueryStats`, `formatLiteral`, and `ConnectionOptions.fromParams(string[string])` working. The planned ddbc driver depends on all of them.
 7. **Decoders must be robust.** Malformed or truncated input throws `ProtocolException`. Never crash, and never allocate based on an unchecked length.
+
+## Licensing rules (important)
+
+clickhoused must remain pure BSL-1.0 code written for this project.
+
+- **Other ClickHouse clients are reference only. Never copy or translate their code.** This includes clickhouse-c, clickhouse-cpp, clickhouse-go/ch-go and the ClickHouse server, all Apache-2.0, as well as the MIT- and BSD-licensed clients. Read them to understand the protocol, then write original D code with its own structure, names and comments. Line-by-line translation (C→D, Go→D, ...) counts as copying. Wire-format facts (packet layouts, field order, constants, type encodings) are fine to reproduce.
+- **Only exception: CityHash v1.0.2.** It is an exact algorithm, so a port is unavoidable. Port it from ClickHouse's `contrib/cityhash102`, which is MIT (Copyright 2011 Google). Keep Google's MIT copyright and permission notice at the top of `compress/cityhash.d`, and list it in a third-party notices file. Note that clickhouse-c's comment calls its CityHash a "v1.0.3 variant"; ClickHouse's own header says the code predates the 1.0.3 algorithm change. Trust ClickHouse's `contrib/cityhash102`.
+- **Write LZ4 from the LZ4 block format specification**, not from the reference library.
+- If any other third-party code ever seems necessary, **stop and ask the user first**.
+- The README must say the project is unofficial and not affiliated with ClickHouse, Inc. ("ClickHouse" is their trademark).
 
 ## Planned layout
 
@@ -81,14 +91,21 @@ CLICKHOUSE_HOST=localhost:9000 dub run ...    # server address for integration t
   - `source/ddbc/drivers/mysqlddbc.d` (the closest model).
   - Known hazard there: the per-connection `core.sync.mutex.Mutex` is recursive and owned by a thread, so it does not protect against two vibe fibers on one thread. The ClickHouse driver must use the lock that clickhoused provides for the active I/O mode.
 
-Don't modify those repositories unless the user explicitly asks.
+- `../../git/ClickHouse` (i.e. `/home/lve/git/ClickHouse`): a full clone of the ClickHouse repository. **Another agent uses it to work on ClickHouse issues.** Consult it whenever ClickHouse source is needed (protocol, serializations, compression), but follow these rules:
+  - Never modify, check out, stash, clean, fetch or build anything there. The current branch and working tree belong to the other agent.
+  - The working tree may be on the other agent's feature branch with unfinished edits. Read the upstream version with `git -C /home/lve/git/ClickHouse show origin/master:<path>`. Search it with `git -C /home/lve/git/ClickHouse grep <pattern> origin/master -- <paths>`.
+  - Useful paths:
+    - `src/Core/Protocol.h`, `src/Core/ProtocolDefines.h` (packet codes, revision constants);
+    - `src/Server/TCPHandler.cpp`, `src/Client/Connection.cpp` (both sides of the protocol);
+    - `src/DataTypes/Serializations/` (column wire formats);
+    - `src/Compression/` (compressed-block framing, LZ4/ZSTD codecs);
+    - `contrib/cityhash102/` (the exact CityHash v1.0.2 used for checksums).
+
+Don't modify any of these repositories unless the user explicitly asks.
 
 ## External references
 
-- ClickHouse sources:
-  - `src/Core/Protocol.h`, `src/Core/ProtocolDefines.h`
-  - `src/Server/TCPHandler.cpp`, `src/Client/Connection.cpp`
-  - `src/DataTypes/Serializations/*`, `src/Compression/*`
+- ClickHouse sources: https://github.com/ClickHouse/ClickHouse. A local clone is available; see "Related local repositories" above.
 - Native protocol docs: https://clickhouse.com/docs/en/native-protocol/basics
 - Reference clients: clickhouse-cpp, clickhouse-go v2 / `ch-go` (cleanest low-level code), clickhouse-rs / klickhouse.
 - vibe-core 2.14:
@@ -96,6 +113,24 @@ Don't modify those repositories unless the user explicitly asks.
   - `vibe.core.sync` (`TaskMutex`, `LocalTaskSemaphore`, `TaskCondition`)
   - `vibe.core.core` (`runTask`, `sleep`, `yield`, `Task.getThis`)
   - `vibe-stream:tls` 1.5 for TLS.
+
+## Initial type scope
+
+The first implementation supports **basic types only**:
+- `(U)Int8`–`(U)Int64`, `Float32`/`Float64`, `Bool`;
+- `String`, `FixedString(N)`;
+- `Date`, `Date32`, `DateTime[(tz)]`, `DateTime64(p[, tz])`;
+- `UUID`, `Enum8`/`Enum16`;
+- `Nullable(T)` of the types above.
+
+Everything else comes later:
+- Array, Tuple, Map, LowCardinality;
+- Decimal, Int/UInt128/256, IPv4/IPv6;
+- Geo types, Variant/Dynamic/JSON.
+
+An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
+
+Until LowCardinality is implemented, the client sends the setting `low_cardinality_allow_in_native_format=0`. With it, the server converts `LowCardinality(T)` columns to plain `T`, so those tables stay readable.
 
 ## Conventions
 
@@ -109,7 +144,7 @@ These are proposed; refine them when code lands.
 - Follow the milestone order:
   - M0: scaffold;
   - M1: wire, Phobos backend, first query;
-  - M2: read all common types;
+  - M2: read **basic types only** (see "Initial type scope" below);
   - M3: insert;
   - M4: LZ4/ZSTD compression;
   - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org;
