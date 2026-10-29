@@ -2,11 +2,13 @@
 module app;
 
 import integrationtests.concurrency : testCancelFromThread;
+import integrationtests.pool : testPoolThreads;
 import integrationtests.harness;
 
 /// Tests that only make sense in thread mode.
 immutable TestCase[] threadTests = [
     TestCase("thread: cancel from another thread", &testCancelFromThread, true),
+    TestCase("thread: pool shared by threads", &testPoolThreads, true),
 ];
 
 int main()

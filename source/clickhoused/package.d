@@ -18,6 +18,7 @@ public import clickhoused.compress.frame : Compression, zstdAvailable;
 public import clickhoused.connection;
 public import clickhoused.exception;
 public import clickhoused.insert;
+public import clickhoused.pool;
 public import clickhoused.io.backend : IoMode;
 public import clickhoused.io.transport : Transport, TransportFactory;
 public import clickhoused.protocol.packets : ProfileInfo, Progress, ServerInfo;

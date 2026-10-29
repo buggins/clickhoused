@@ -1,5 +1,10 @@
 /++
-Connection options.
+Connection options, and parsing them from a connection string (DSN).
+
+A DSN looks like
+`clickhouse://user:password@host1:9000,host2:9000/database?compress=lz4&max_threads=4`.
+All parts except the host are optional. See `ConnectionOptions.fromDsn` for
+the recognized parameters.
 
 Copyright: Copyright © 2026, Vadim Lopatin
 License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
@@ -9,16 +14,52 @@ module clickhoused.settings;
 import core.time : Duration, seconds;
 
 import clickhoused.compress.frame : Compression;
+import clickhoused.exception : ClientException;
 import clickhoused.io.backend : IoMode;
 import clickhoused.io.transport : TransportFactory;
+
+/// A server address.
+struct HostPort
+{
+    /// Host name or IP address.
+    string host;
+    /// Native protocol port.
+    ushort port = 9000;
+
+    /// `host:port`, with IPv6 addresses in brackets.
+    string toString() const @safe pure
+    {
+        import std.algorithm.searching : canFind;
+        import std.conv : to;
+
+        return (host.canFind(':') ? "[" ~ host ~ "]" : host) ~ ":" ~ port.to!string;
+    }
+}
+
+/// How `ConnectionOptions.hosts` are tried when connecting.
+enum HostSelection
+{
+    /// In the given order: the first host is the primary, the others are fallbacks.
+    inOrder,
+    /// In random order, spreading connections over the hosts.
+    random,
+}
 
 /// Options for opening a `clickhoused.connection.Connection`.
 struct ConnectionOptions
 {
-    /// Server host name or IP address.
+    /// Server host name or IP address. Ignored when `hosts` is set.
     string host = "localhost";
-    /// Server native protocol port (9000; 9440 is the usual TLS port).
+    /// Server native protocol port (9000; 9440 is the usual TLS port). Ignored when `hosts` is set.
     ushort port = 9000;
+    /++
+    Several servers (e.g. replicas). Connecting tries them as `hostSelection`
+    says and uses the first one that answers; a host that refuses the login is
+    not skipped. When empty, `host` and `port` are used.
+    +/
+    HostPort[] hosts;
+    /// Order in which `hosts` are tried.
+    HostSelection hostSelection = HostSelection.inOrder;
     /// Default database.
     string database = "default";
     /// User name.
@@ -69,6 +110,322 @@ struct ConnectionOptions
 
     /// Client name reported to the server (visible in `system.processes`).
     string clientName = "clickhoused";
+
+    /++
+    Parses a connection string:
+    `clickhouse://[user[:password]@]host[:port][,host[:port]...][/database][?param=value&...]`.
+
+    User, password and values may be percent-encoded. IPv6 addresses go in
+    brackets: `[::1]:9000`. Recognized parameters:
+    $(UL
+        $(LI `compress`: `none`, `lz4` or `zstd` (`true` means `lz4`);)
+        $(LI `zstd_level`;)
+        $(LI `connect_timeout`, `send_timeout`, `receive_timeout`: seconds, may be fractional;)
+        $(LI `io`: `auto`, `phobos` or `vibe`;)
+        $(LI `host_selection`: `in_order` or `random`;)
+        $(LI `client_name`, `quota_key`, `yield_between_blocks` (`true`/`false`);)
+        $(LI `pool_*`: connection pool options, see `clickhoused.pool.PoolOptions.fromDsn`.)
+    )
+    Any other parameter is sent to the server as a setting, e.g. `max_threads=4`.
+
+    Throws: `ClientException` if the string is malformed or a value is invalid.
+    +/
+    static ConnectionOptions fromDsn(string dsn) @safe
+    {
+        import std.algorithm.searching : findSplit, findSplitBefore, startsWith;
+        import std.array : split;
+        import std.string : indexOf, lastIndexOf;
+
+        enum scheme = "clickhouse://";
+        if (!dsn.startsWith(scheme))
+            throw new ClientException("A connection string must start with '" ~ scheme ~ "'");
+        string rest = dsn[scheme.length .. $];
+
+        string query;
+        if (auto q = rest.findSplit("?"))
+        {
+            rest = q[0];
+            query = q[2];
+        }
+        string path;
+        const slash = rest.indexOf('/');
+        if (slash >= 0)
+        {
+            path = rest[slash + 1 .. $];
+            rest = rest[0 .. slash];
+        }
+
+        string[string] params;
+        const at = rest.lastIndexOf('@');
+        if (at >= 0)
+        {
+            const userInfo = rest[0 .. at];
+            rest = rest[at + 1 .. $];
+            if (auto up = userInfo.findSplit(":"))
+            {
+                params["user"] = decode(up[0], dsn);
+                params["password"] = decode(up[2], dsn);
+            }
+            else
+                params["user"] = decode(userInfo, dsn);
+        }
+        if (path.length)
+            params["database"] = decode(path, dsn);
+        foreach (pair; query.split("&"))
+        {
+            if (pair.length == 0)
+                continue;
+            if (auto kv = pair.findSplit("="))
+                params[decode(kv[0], dsn)] = decode(kv[2], dsn);
+            else
+                params[decode(pair, dsn)] = "true";
+        }
+
+        auto options = fromParams(params);
+        if (rest.length == 0)
+            throw new ClientException("The connection string has no host");
+        options.hosts = null;
+        foreach (hostPort; rest.split(","))
+            options.hosts ~= parseHostPort(hostPort, dsn);
+        if (options.hosts.length == 1)
+        {
+            options.host = options.hosts[0].host;
+            options.port = options.hosts[0].port;
+        }
+        return options;
+    }
+
+    ///
+    @safe unittest
+    {
+        auto o = ConnectionOptions.fromDsn(
+                "clickhouse://reader:s%40cret@db1:9001,db2/analytics?compress=lz4&max_threads=4");
+        assert(o.user == "reader" && o.password == "s@cret" && o.database == "analytics");
+        assert(o.hosts == [HostPort("db1", 9001), HostPort("db2", 9000)]);
+        assert(o.compression == Compression.lz4);
+        assert(o.settings["max_threads"] == "4");
+    }
+
+    /++
+    Builds options from name/value pairs, e.g. the parameters of a ddbc URL.
+
+    Keys: `host`, `port`, `user`, `password`, `database` (or `dbname`), plus
+    the parameters described in `fromDsn`. Other keys become server settings.
+
+    Throws: `ClientException` if a value is invalid.
+    +/
+    static ConnectionOptions fromParams(const string[string] params) @safe
+    {
+        import std.algorithm.searching : startsWith;
+        import std.conv : ConvException, to;
+
+        ConnectionOptions options;
+        foreach (key, value; params)
+        {
+            T parse(T)()
+            {
+                try
+                    return value.to!T;
+                catch (ConvException)
+                    throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "'");
+            }
+
+            switch (key)
+            {
+            case "host":
+                options.host = value;
+                break;
+            case "port":
+                options.port = parse!ushort;
+                break;
+            case "user":
+                options.user = value;
+                break;
+            case "password":
+                options.password = value;
+                break;
+            case "database":
+            case "dbname":
+                options.database = value;
+                break;
+            case "compress":
+            case "compression":
+                switch (value)
+                {
+                case "true":
+                case "1":
+                case "lz4":
+                    options.compression = Compression.lz4;
+                    break;
+                case "false":
+                case "0":
+                case "none":
+                    options.compression = Compression.none;
+                    break;
+                case "zstd":
+                    options.compression = Compression.zstd;
+                    break;
+                default:
+                    throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "'");
+                }
+                break;
+            case "zstd_level":
+                options.zstdLevel = parse!int;
+                break;
+            case "connect_timeout":
+                options.connectTimeout = parseSeconds(key, value);
+                break;
+            case "send_timeout":
+                options.sendTimeout = parseSeconds(key, value);
+                break;
+            case "receive_timeout":
+                options.receiveTimeout = parseSeconds(key, value);
+                break;
+            case "io":
+                options.ioMode = value == "auto" ? IoMode.auto_ : parseEnum!IoMode(key, value);
+                break;
+            case "host_selection":
+                options.hostSelection = value == "in_order" ? HostSelection.inOrder
+                    : parseEnum!HostSelection(key, value);
+                break;
+            case "client_name":
+                options.clientName = value;
+                break;
+            case "quota_key":
+                options.quotaKey = value;
+                break;
+            case "yield_between_blocks":
+                options.yieldBetweenBlocks = parse!bool;
+                break;
+            case "secure":
+            case "tls":
+                if (value != "false" && value != "0")
+                    throw new ClientException("TLS connections are not supported yet");
+                break;
+            default:
+                if (!key.startsWith("pool_"))
+                    options.settings[key] = value;
+            }
+        }
+        return options;
+    }
+
+    ///
+    @safe unittest
+    {
+        auto o = ConnectionOptions.fromParams([
+            "host": "ch",
+            "port": "9440",
+            "dbname": "db",
+            "max_threads": "2"
+        ]);
+        assert(o.host == "ch" && o.port == 9440 && o.database == "db" && o.settings["max_threads"] == "2");
+    }
+}
+
+@safe unittest
+{
+    import core.time : msecs;
+    import std.exception : assertThrown;
+
+    // Defaults and minimal strings
+    auto o = ConnectionOptions.fromDsn("clickhouse://localhost");
+    assert(o.host == "localhost" && o.port == 9000 && o.user == "default" && o.database == "default");
+
+    // IPv6, timeouts, I/O mode, flags
+    o = ConnectionOptions.fromDsn("clickhouse://[::1]:9440/?connect_timeout=0.5&io=phobos&yield_between_blocks=false"
+            ~ "&host_selection=random&pool_max=4&compress=zstd&zstd_level=3");
+    assert(o.hosts == [HostPort("::1", 9440)] && o.hosts[0].toString() == "[::1]:9440");
+    assert(o.connectTimeout == 500.msecs && o.ioMode == IoMode.phobos && !o.yieldBetweenBlocks);
+    assert(o.hostSelection == HostSelection.random && o.compression == Compression.zstd && o.zstdLevel == 3);
+    assert("pool_max" !in o.settings && o.database == "default");
+
+    // User without password; percent-encoded database
+    o = ConnectionOptions.fromDsn("clickhouse://admin@h/my%20db");
+    assert(o.user == "admin" && o.password == "" && o.database == "my db");
+
+    foreach (bad; [
+        "http://h", "clickhouse://", "clickhouse://h:notaport", "clickhouse://h:99999",
+        "clickhouse://h?compress=x",
+        "clickhouse://h?connect_timeout=-1", "clickhouse://h?io=threads", "clickhouse://h?secure=true",
+        "clickhouse://[::1", "clickhouse://h?x=%zz",
+    ])
+        assertThrown!ClientException(ConnectionOptions.fromDsn(bad), bad);
+}
+
+private HostPort parseHostPort(string text, string dsn) @safe
+{
+    import std.algorithm.searching : findSplit, startsWith;
+    import std.conv : ConvException, to;
+    import std.string : indexOf, lastIndexOf;
+
+    string host = text;
+    string port;
+    if (text.startsWith("["))
+    {
+        const close = text.indexOf(']');
+        if (close < 0)
+            throw new ClientException("Invalid host '" ~ text ~ "' in '" ~ dsn ~ "'");
+        host = text[1 .. close];
+        const after = text[close + 1 .. $];
+        if (after.length)
+        {
+            if (!after.startsWith(":"))
+                throw new ClientException("Invalid host '" ~ text ~ "' in '" ~ dsn ~ "'");
+            port = after[1 .. $];
+        }
+    }
+    else if (auto hp = text.findSplit(":"))
+    {
+        host = hp[0];
+        port = hp[2];
+    }
+    if (host.length == 0)
+        throw new ClientException("Empty host in '" ~ dsn ~ "'");
+    auto result = HostPort(host);
+    if (port.length)
+    {
+        try
+            result.port = port.to!ushort;
+        catch (ConvException)
+            throw new ClientException("Invalid port '" ~ port ~ "' in '" ~ dsn ~ "'");
+    }
+    return result;
+}
+
+private string decode(string text, string dsn) @safe
+{
+    import std.uri : URIException, decodeComponent;
+
+    try
+        return decodeComponent(text);
+    catch (URIException)
+        throw new ClientException("Invalid percent-encoding in '" ~ dsn ~ "'");
+}
+
+private Duration parseSeconds(string key, string value) @safe
+{
+    import core.time : dur;
+    import std.conv : ConvException, to;
+
+    double secondsValue;
+    try
+        secondsValue = value.to!double;
+    catch (ConvException)
+        throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "' (seconds expected)");
+    if (!(secondsValue >= 0) || secondsValue > 1e9)
+        throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "' (seconds expected)");
+    return dur!"hnsecs"(cast(long)(secondsValue * 10_000_000));
+}
+
+private E parseEnum(E)(string key, string value) @safe
+{
+    import std.conv : ConvException, to;
+
+    try
+        return value.to!E;
+    catch (ConvException)
+        throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "'");
 }
 
 ///

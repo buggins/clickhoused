@@ -5,7 +5,7 @@
 
 A native [ClickHouse](https://clickhouse.com) client library for the [D programming language](https://dlang.org).
 
-> **Status: early development.** Connecting, running queries, reading results, inserting data and LZ4/ZSTD network compression work for the basic column types. TLS, struct mapping, fiber-mode sockets and a connection pool are not implemented yet, and the API may still change.
+> **Status: early development.** Queries, inserts, LZ4/ZSTD compression, thread and vibe.d fiber modes, connection strings with failover, and a connection pool work for the basic column types. TLS and struct mapping are not implemented yet, and the API may still change.
 
 ## Goals
 

@@ -43,6 +43,30 @@ interface IoBackend
 
     /// Lets other fibers run (fiber mode); does nothing in thread mode.
     void yieldNow() @safe;
+
+    /// Creates a lock with a wait/notify condition, for the connection pool.
+    PoolSync newPoolSync() @safe;
+}
+
+/++
+A lock plus a condition to wait on, as the connection pool needs it.
+`wait` must be called with the lock held; it releases the lock while waiting.
++/
+interface PoolSync
+{
+    /// Acquires the lock.
+    void lock() @safe;
+    /// Releases the lock.
+    void unlock() @safe;
+    /++
+    Releases the lock, waits until `notifyAll` is called or `timeout`
+    passes, then reacquires the lock.
+
+    Returns: false on timeout.
+    +/
+    bool wait(Duration timeout) @safe;
+    /// Wakes all waiters.
+    void notifyAll() @safe;
 }
 
 /// Whether fiber mode (vibe-core) is compiled in.

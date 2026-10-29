@@ -10,7 +10,7 @@ import core.time : Duration;
 import std.socket;
 
 import clickhoused.exception : ConnectionException;
-import clickhoused.io.backend : IoBackend;
+import clickhoused.io.backend : IoBackend, PoolSync;
 import clickhoused.io.transport : Transport;
 
 /// `Transport` over a connected, blocking `std.socket.Socket`.
@@ -119,6 +119,12 @@ final class PhobosBackend : IoBackend
     {
     }
 
+    /// A mutex with a condition variable.
+    override PoolSync newPoolSync() @safe
+    {
+        return new ThreadPoolSync;
+    }
+
     /++
     Resolves `host` and connects to the first address that accepts the connection.
 
@@ -142,6 +148,44 @@ final class PhobosBackend : IoBackend
                 lastError = e.msg;
         }
         throw new ConnectionException("Cannot connect to " ~ host ~ ":" ~ portString(port) ~ ": " ~ lastError);
+    }
+}
+
+/// `PoolSync` for threads: `core.sync` mutex and condition variable.
+final class ThreadPoolSync : PoolSync
+{
+    import core.sync.condition : Condition;
+    import core.sync.mutex : Mutex;
+
+    private Mutex mutex;
+    private Condition condition;
+
+    /// Creates an unlocked lock.
+    this() @trusted
+    {
+        // core.sync constructors are not annotated @safe; creating them is memory-safe
+        mutex = new Mutex;
+        condition = new Condition(mutex);
+    }
+
+    override void lock() @trusted
+    {
+        mutex.lock();
+    }
+
+    override void unlock() @trusted
+    {
+        mutex.unlock();
+    }
+
+    override bool wait(Duration timeout) @trusted
+    {
+        return condition.wait(timeout);
+    }
+
+    override void notifyAll() @trusted
+    {
+        condition.notifyAll();
     }
 }
 

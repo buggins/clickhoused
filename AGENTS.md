@@ -55,7 +55,8 @@ source/clickhoused/        library:
   package.d                public imports, version constants, clickhousedHasVibe
   connection.d             Connection (handshake, ping, query, exec, beginInsert, insert), QueryResult, QueryStats
   insert.d                 Inserter (addRow / send / flush / finish / abort), appendValue, quoteIdentifier
-  settings.d               ConnectionOptions
+  settings.d               ConnectionOptions (+ fromDsn, fromParams), HostPort, HostSelection
+  pool.d                   ConnectionPool, PoolOptions (+ fromDsn), PooledConnection (RAII)
   exception.d              ClickHouseException > ServerException / ClientException / ConnectionException / ProtocolException
   block.d                  Block, readBlock / writeBlock (native format)
   io/                      transport.d (Transport interface), backend.d (IoMode, IoBackend, backendFor, inVibeTask),
@@ -68,7 +69,7 @@ source/clickhoused/        library:
                            parser.d (type-name parser), package.d (imports all)
   compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
                            `zstd` configuration only), frame.d (Compression enum, frames, CompressedInput/Output)
-                           Planned: pool.d, dsn.d, mapping.d, ...
+                           Planned: mapping.d (struct mapping), ...
 integration-tests/         shared harness (dub subpackage `clickhoused:integration-tests`).
                            Tests are listed in `allTests` in source/integrationtests/harness.d.
 integration-tests-phobos/  runner for thread mode
@@ -214,6 +215,15 @@ Don't modify any of these repositories unless the user explicitly asks.
   - `Connection.cancel()` writes the 1-byte Cancel packet straight to the transport. It's safe from another thread/task while a result is being read, and refused during an insert.
   - The server answers a cancel with `EndOfStream` and ignores a Cancel that arrives when no query is running.
   - `QueryResult.close()` cancels and discards (server errors ignored); `QueryResult.drain()` reads to the end without cancelling. `exec()` uses `drain()`: never cancel a DDL statement.
+- **Connection strings and failover (M5b):**
+  - DSN: `clickhouse://user:pass@h1:9000,h2/db?param=...`. Known parameters are options; `pool_*` parameters are for `PoolOptions.fromDsn`; anything else becomes a server setting.
+  - `secure`/`tls` are rejected until TLS exists, so they never silently fall back to plain text.
+  - Connecting tries each host: network and protocol errors move to the next host, a server-rejected login doesn't. `Connection.host` reports the chosen host.
+- **Connection pool (M5b):**
+  - Thread mode: one shared `SubPool` (`ThreadPoolSync`: mutex and condition).
+  - Fiber mode: one `SubPool` per thread (`FiberPoolSync`: no-op lock and a vibe manual event, since tasks on a thread don't preempt each other), chosen by `IoMode` like connections.
+  - Expiry and health checks are lazy, on acquire/release; never do I/O while holding the lock.
+  - Returned connections that are closed, busy or too old are closed, not reused.
 - **ZSTD** is optional. The `zstd` dub configuration defines `version (ClickHousedZstd)` and links `libzstd`. Test it with:
   - `dub test -c zstd`;
   - `CLICKHOUSE_COMPRESSION=zstd dub run :integration-tests-phobos --override-config=clickhoused/zstd`.
@@ -263,7 +273,7 @@ These are proposed; refine them when code lands.
   - M2: read **basic types only** (see "Initial type scope" below) (done);
   - M3: insert (done);
   - M4: LZ4/ZSTD compression (done);
-  - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org;
+  - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org (M5a fiber backend and cancel: done; M5b DSN, failover, pool: done; M5c struct mapping, examples, release: next);
   - M6: ddbc driver;
   - M7: hibernated dialect;
   - M8: TLS, composite types and production features;

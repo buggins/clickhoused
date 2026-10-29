@@ -15,6 +15,7 @@ import integrationtests.basic;
 import integrationtests.compression;
 import integrationtests.concurrency;
 import integrationtests.insert;
+import integrationtests.pool;
 import integrationtests.server : serverConfigured;
 import integrationtests.smoke;
 import integrationtests.types;
@@ -60,6 +61,12 @@ immutable TestCase[] allTests = [
     TestCase("network compression", &testCompression, true),
     TestCase("automatic I/O backend", &testIoBackendSelection, true),
     TestCase("close() cancels the query", &testCloseCancelsQuery, true),
+    TestCase("connection string", &testDsnConnect, true),
+    TestCase("host failover", &testFailover, true),
+    TestCase("pool: reuse", &testPoolReuse, true),
+    TestCase("pool: limit and wait", &testPoolLimit, true),
+    TestCase("pool: discard closed and busy", &testPoolDiscards, true),
+    TestCase("pool: idle expiry", &testPoolExpiry, true),
 ];
 
 /// Settings passed from the runner to the tests.

@@ -18,7 +18,42 @@ immutable TestCase[] vibeTests = [
     TestCase("fiber: queries run concurrently", &testConcurrentQueries, true),
     TestCase("fiber: cancel from another task", &testCancelFromTask, true),
     TestCase("fiber: interrupted task closes connection", &testInterrupt, true),
+    TestCase("fiber: pool shared by tasks", &testPoolTasks, true),
 ];
+
+/// Tasks on one thread share a pool; never more connections than the limit.
+void testPoolTasks()
+{
+    PoolOptions p;
+    p.maxConnections = 3;
+    auto pool = new ConnectionPool(serverOptions(), p);
+    scope (exit)
+        pool.close();
+    size_t inUse, maxInUse, failures, done;
+    Task[] tasks;
+    foreach (t; 0 .. 20)
+        tasks ~= runTask(() nothrow{
+            foreach (i; 0 .. 10)
+            {
+                try
+                {
+                    auto c = pool.lockConnection();
+                    if (++inUse > maxInUse)
+                        maxInUse = inUse;
+                    c.exec("SELECT sleep(0.01)");
+                    inUse--;
+                    done++;
+                }
+                catch (Exception)
+                    failures++;
+            }
+        });
+    foreach (t; tasks)
+        t.join();
+    enforce(failures == 0 && done == 200, "failed queries");
+    enforce(maxInUse <= 3, "more connections than the limit");
+    enforce(maxInUse >= 2, "the tasks did not overlap");
+}
 
 /// Ten one-second queries in ten tasks on one thread take about one second, not ten:
 /// waiting for the server does not block the event loop.

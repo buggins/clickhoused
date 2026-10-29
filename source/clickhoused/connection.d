@@ -29,7 +29,7 @@ import clickhoused.io.buffer : BufferedReader, BufferedWriter;
 import clickhoused.io.transport : Transport;
 import clickhoused.protocol.codes : ClientPacket, Revision, ServerPacket;
 import clickhoused.protocol.packets;
-import clickhoused.settings : ConnectionOptions;
+import clickhoused.settings : ConnectionOptions, HostPort, HostSelection;
 
 /// Statistics of a finished (or partially read) query.
 struct QueryStats
@@ -69,6 +69,7 @@ final class Connection
 
     package ConnectionOptions options;
     package IoBackend backend;
+    private HostPort connectedHost;
     package Transport transport;
     /// An `Inserter` is sending data; `cancel` must not write then.
     package bool insertActive;
@@ -104,10 +105,11 @@ final class Connection
     void delegate(Block entries) @safe onLog;
 
     /++
-    Opens a connection and performs the handshake.
+    Opens a connection and performs the handshake. With several hosts in
+    `options.hosts`, connects to the first that answers.
 
     Throws:
-        `ConnectionException` if the server cannot be reached;
+        `ConnectionException` if no server can be reached (the message lists each attempt);
         `ServerException` if the server rejects the login;
         `ProtocolException` if the server does not speak the native protocol.
     +/
@@ -119,6 +121,18 @@ final class Connection
         identity = ClientIdentity(options.clientName, clickhousedVersionMajor, clickhousedVersionMinor,
                 clickhousedVersionPatch);
         connect();
+    }
+
+    /++
+    Opens a connection described by a connection string, e.g.
+    `clickhouse://user:password@host:9000/database?compress=lz4`.
+    See `ConnectionOptions.fromDsn`.
+
+    Throws: `ClientException` for a malformed string; otherwise as the other constructor.
+    +/
+    this(string dsn) @safe
+    {
+        this(ConnectionOptions.fromDsn(dsn));
     }
 
     /// Server name, version, timezone and revision, as received in the handshake.
@@ -143,6 +157,12 @@ final class Connection
     @property bool isBusy() const @safe pure nothrow
     {
         return state == State.busy;
+    }
+
+    /// The server this connection is connected to (one of `ConnectionOptions.hosts`).
+    @property HostPort host() const @safe pure nothrow
+    {
+        return connectedHost;
     }
 
     /// Name of the I/O backend in use: `"phobos"` (thread mode) or `"vibe"` (fiber mode).
@@ -409,11 +429,46 @@ final class Connection
             throw new ClientException("ZSTD compression is not compiled in: build clickhoused with the 'zstd' "
                     ~ "configuration, or use Compression.lz4");
         backend = backendFor(options.ioMode);
+
+        // Try the hosts in turn. Network and protocol failures move on to the next
+        // host; a login rejected by the server does not.
+        string failures;
+        foreach (endpoint; candidateHosts())
+        {
+            try
+            {
+                connectTo(endpoint);
+                return;
+            }
+            catch (ConnectionException e)
+                failures ~= (failures.length ? "; " : "") ~ endpoint.toString() ~ ": " ~ e.msg;
+            catch (ProtocolException e)
+                failures ~= (failures.length ? "; " : "") ~ endpoint.toString() ~ ": " ~ e.msg;
+        }
+        throw new ConnectionException("Cannot connect to ClickHouse: " ~ failures);
+    }
+
+    private HostPort[] candidateHosts() const @safe
+    {
+        import std.random : randomShuffle;
+
+        auto hosts = options.hosts.length ? options.hosts.dup : [
+            HostPort(options.host, options.port)
+        ];
+        if (options.hostSelection == HostSelection.random)
+            randomShuffle(hosts);
+        return hosts;
+    }
+
+    private void connectTo(HostPort endpoint) @safe
+    {
         transport = options.transportFactory !is null
-            ? options.transportFactory(options.host, options.port, options.connectTimeout) : backend.connect(
-                    options.host, options.port, options.connectTimeout);
+            ? options.transportFactory(endpoint.host, endpoint.port, options.connectTimeout) : backend.connect(
+                    endpoint.host, endpoint.port, options.connectTimeout);
+        connectedHost = endpoint;
         reader = new BufferedReader(transport);
         writer = new BufferedWriter(transport);
+        compressedInput = null;
         if (compressionEnabled)
         {
             compressedInput = new CompressedInput(reader);

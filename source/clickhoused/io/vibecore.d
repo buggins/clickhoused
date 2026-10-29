@@ -26,7 +26,7 @@ import vibe.core.stream : IOMode;
 import vibe.core.task : InterruptException;
 
 import clickhoused.exception : ClientException, ConnectionException;
-import clickhoused.io.backend : IoBackend;
+import clickhoused.io.backend : IoBackend, PoolSync;
 import clickhoused.io.transport : Transport;
 
 /// `Transport` over a vibe-core `TCPConnection`.
@@ -143,6 +143,49 @@ final class VibeBackend : IoBackend
         import vibe.core.core : yield;
 
         yield();
+    }
+
+    /// A task-level event; usable only by tasks of the creating thread.
+    override PoolSync newPoolSync() @safe
+    {
+        return new FiberPoolSync;
+    }
+}
+
+/++
+`PoolSync` for the tasks of one thread. Tasks on one thread never run at the
+same time and switch only at blocking calls, so the lock does nothing; waiting
+uses a vibe-core manual event.
++/
+final class FiberPoolSync : PoolSync
+{
+    import vibe.core.sync : LocalManualEvent, createManualEvent;
+
+    private LocalManualEvent event;
+
+    /// Creates the event.
+    this() @safe
+    {
+        event = createManualEvent();
+    }
+
+    override void lock() @safe
+    {
+    }
+
+    override void unlock() @safe
+    {
+    }
+
+    override bool wait(Duration timeout) @safe
+    {
+        const before = event.emitCount;
+        return event.wait(timeout, before) != before;
+    }
+
+    override void notifyAll() @safe
+    {
+        event.emit();
     }
 }
 
