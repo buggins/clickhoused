@@ -15,6 +15,7 @@ import integrationtests.basic;
 import integrationtests.compression;
 import integrationtests.concurrency;
 import integrationtests.insert;
+import integrationtests.mapping;
 import integrationtests.pool;
 import integrationtests.server : serverConfigured;
 import integrationtests.smoke;
@@ -67,6 +68,9 @@ immutable TestCase[] allTests = [
     TestCase("pool: limit and wait", &testPoolLimit, true),
     TestCase("pool: discard closed and busy", &testPoolDiscards, true),
     TestCase("pool: idle expiry", &testPoolExpiry, true),
+    TestCase("struct mapping round trip", &testStructRoundTrip, true),
+    TestCase("struct mapping errors", &testStructErrors, true),
+    TestCase("SQL literals", &testFormatLiteral, true),
 ];
 
 /// Settings passed from the runner to the tests.

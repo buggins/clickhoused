@@ -24,6 +24,7 @@ import clickhoused.block : Block, readBlock, writeEmptyBlock;
 import clickhoused.compress.frame : CompressedInput, CompressedOutput, Compression, zstdAvailable;
 import clickhoused.exception;
 import clickhoused.insert : Inserter, quoteIdentifier;
+import clickhoused.mapping : RowRange;
 import clickhoused.io.backend : IoBackend, backendFor;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
 import clickhoused.io.transport : Transport;
@@ -313,6 +314,83 @@ final class Connection
                 ins.finish(); // ends the insert with no rows
             throw e;
         }
+        return ins.finish();
+    }
+
+    /++
+    Runs a query and returns its rows as structs of type `T` (see
+    `clickhoused.mapping`). Columns are matched to fields by name; extra
+    columns are ignored.
+
+    Returns: an input range of `T`; the connection is busy until it is
+    exhausted or closed.
+    +/
+    RowRange!T query(T)(string sql, const string[string] settings = null, const string[string] parameters = null) @safe
+            if (is(T == struct))
+    {
+        return RowRange!T(query(sql, settings, parameters));
+    }
+
+    /++
+    Runs a query and returns its first row as a `T`; the rest of the result is discarded.
+
+    Throws: `ClientException` if the query returns no rows.
+    +/
+    T queryRow(T)(string sql, const string[string] settings = null, const string[string] parameters = null) @safe
+            if (is(T == struct))
+    {
+        auto rows = query!T(sql, settings, parameters);
+        scope (exit)
+            rows.close();
+        if (rows.empty)
+            throw new ClientException("The query returned no rows");
+        return rows.front;
+    }
+
+    /++
+    Runs a query and returns the value in the first column of the first row,
+    e.g. `queryValue!ulong("SELECT count() FROM t")`. `T` is any type a struct
+    field may have (see `clickhoused.mapping`); the rest of the result is discarded.
+
+    Throws: `ClientException` if the query returns no rows or the value does not convert to `T`.
+    +/
+    T queryValue(T)(string sql, const string[string] settings = null, const string[string] parameters = null) @safe
+    {
+        import clickhoused.mapping : readValue;
+
+        auto result = query(sql, settings, parameters);
+        scope (exit)
+            result.close();
+        if (result.empty)
+            throw new ClientException("The query returned no rows");
+        return readValue!T(result.front.columns[0], 0);
+    }
+
+    /++
+    Inserts structs (or any input range of structs) into `table`, one column
+    per mapped field (see `clickhoused.mapping`).
+
+    If a value does not fit its column, the insert is abandoned and the
+    connection closed; rows from blocks already sent may have been stored.
+
+    Returns: statistics of the insert.
+    +/
+    QueryStats insert(R)(string table, R rows, const string[string] settings = null) @safe
+            if (!is(R : Block))
+    {
+        import clickhoused.mapping : columnNames;
+        import std.range : ElementType;
+
+        alias T = ElementType!R;
+        static assert(is(T == struct), "insert expects a range of structs, not of " ~ T.stringof);
+        string columns;
+        foreach (i, name; columnNames!T)
+            columns ~= (i ? ", " : "") ~ quoteIdentifier(name);
+        auto ins = beginInsert("INSERT INTO " ~ table ~ " (" ~ columns ~ ") VALUES", settings);
+        scope (failure)
+            ins.abort();
+        foreach (ref row; rows)
+            ins.addStruct(row);
         return ins.finish();
     }
 

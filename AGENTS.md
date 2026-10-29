@@ -54,7 +54,9 @@ clickhoused must remain pure BSL-1.0 code written for this project.
 source/clickhoused/        library:
   package.d                public imports, version constants, clickhousedHasVibe
   connection.d             Connection (handshake, ping, query, exec, beginInsert, insert), QueryResult, QueryStats
-  insert.d                 Inserter (addRow / send / flush / finish / abort), appendValue, quoteIdentifier
+  insert.d                 Inserter (addRow / addStruct / send / flush / finish / abort), appendValue, quoteIdentifier
+  mapping.d                struct mapping: @column, @ignore, columnNames, readValue, RowRange (query!T)
+  literal.d                formatLiteral (SQL literals)
   settings.d               ConnectionOptions (+ fromDsn, fromParams), HostPort, HostSelection
   pool.d                   ConnectionPool, PoolOptions (+ fromDsn), PooledConnection (RAII)
   exception.d              ClickHouseException > ServerException / ClientException / ConnectionException / ProtocolException
@@ -69,12 +71,12 @@ source/clickhoused/        library:
                            parser.d (type-name parser), package.d (imports all)
   compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
                            `zstd` configuration only), frame.d (Compression enum, frames, CompressedInput/Output)
-                           Planned: mapping.d (struct mapping), ...
+
 integration-tests/         shared harness (dub subpackage `clickhoused:integration-tests`).
                            Tests are listed in `allTests` in source/integrationtests/harness.d.
 integration-tests-phobos/  runner for thread mode
 integration-tests-vibe/    runner for fiber mode: depends on vibe-core and runs the tests inside a vibe task
-examples/                  (planned) one dub subpackage per example
+examples/                  dub subpackages: basic (`:example-basic`), vibe (`:example-vibe`); read CLICKHOUSE_DSN
 bench/                     (planned) benchmarks
 ```
 
@@ -126,7 +128,7 @@ dub run dfmt@0.15.2 -- --inplace $(git ls-files '*.d')    # format (CI fails if 
 dub build -b docs                                         # generate API docs into /docs/
 ```
 
-Run the lint and format commands before committing D code. The tool versions are pinned so CI results stay stable. dfmt 0.15.2 mangles lambdas with attributes (`() nothrow {` becomes `() nothrow{`), so use named nested functions instead. dfmt sometimes needs two passes to settle; run it twice when it changes files.
+Run the lint and format commands before committing D code. The tool versions are pinned so CI results stay stable. dfmt 0.15.2 mangles lambdas with attributes (`() nothrow {` becomes `() nothrow{`), so use named nested functions instead. It also merges `@safe return` into `@safereturn`; avoid the `return` attribute. dfmt sometimes needs two passes to settle; run it twice when it changes files.
 
 Notes:
 - `vibe-core` is an **optional** dependency of the root package, so a plain `dub build` never includes it.
@@ -224,6 +226,12 @@ Don't modify any of these repositories unless the user explicitly asks.
   - Fiber mode: one `SubPool` per thread (`FiberPoolSync`: no-op lock and a vibe manual event, since tasks on a thread don't preempt each other), chosen by `IoMode` like connections.
   - Expiry and health checks are lazy, on acquire/release; never do I/O while holding the lock.
   - Returned connections that are closed, busy or too old are closed, not reused.
+- **Struct mapping (M5c):**
+  - `Connection.query!T`/`queryRow!T`/`queryValue!T`/`insert(table, range)` are member templates. UFCS can't add them, because a member named `query` hides free functions.
+  - Fields map by name (`@column`, `@ignore`), and extra result columns are ignored.
+  - `readValue!T` is the read-side counterpart of `appendValue`.
+  - A failed column binding closes the result, so the connection doesn't stay busy.
+  - `insert(table, structs)` aborts (closes the connection) when a value doesn't fit.
 - **ZSTD** is optional. The `zstd` dub configuration defines `version (ClickHousedZstd)` and links `libzstd`. Test it with:
   - `dub test -c zstd`;
   - `CLICKHOUSE_COMPRESSION=zstd dub run :integration-tests-phobos --override-config=clickhoused/zstd`.
@@ -273,7 +281,7 @@ These are proposed; refine them when code lands.
   - M2: read **basic types only** (see "Initial type scope" below) (done);
   - M3: insert (done);
   - M4: LZ4/ZSTD compression (done);
-  - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org (M5a fiber backend and cancel: done; M5b DSN, failover, pool: done; M5c struct mapping, examples, release: next);
+  - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org (done; release tagging and registration on code.dlang.org are done by the user);
   - M6: ddbc driver;
   - M7: hibernated dialect;
   - M8: TLS, composite types and production features;

@@ -18,6 +18,8 @@ public import clickhoused.compress.frame : Compression, zstdAvailable;
 public import clickhoused.connection;
 public import clickhoused.exception;
 public import clickhoused.insert;
+public import clickhoused.literal;
+public import clickhoused.mapping;
 public import clickhoused.pool;
 public import clickhoused.io.backend : IoMode;
 public import clickhoused.io.transport : Transport, TransportFactory;
@@ -28,11 +30,11 @@ public import clickhoused.types;
 /// Library version, reported to the server in the client Hello packet.
 enum uint clickhousedVersionMajor = 0;
 /// ditto
-enum uint clickhousedVersionMinor = 0;
+enum uint clickhousedVersionMinor = 1;
 /// ditto
-enum uint clickhousedVersionPatch = 1;
+enum uint clickhousedVersionPatch = 0;
 
-/// Library version as a string, e.g. `"0.0.1"`.
+/// Library version as a string, e.g. `"0.1.0"`.
 enum string clickhousedVersion = versionString(clickhousedVersionMajor,
             clickhousedVersionMinor, clickhousedVersionPatch);
 
@@ -63,7 +65,7 @@ private string versionString(uint major, uint minor, uint patch) pure @safe
 ///
 @safe unittest
 {
-    assert(clickhousedVersion == "0.0.1");
+    assert(clickhousedVersion == "0.1.0");
     assert(clickhousedClientName == "clickhoused");
 }
 

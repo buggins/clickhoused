@@ -1,0 +1,9 @@
+{
+    "name": "example-basic",
+    "description": "clickhoused example: connect, create a table, insert and query structs",
+    "license": "BSL-1.0",
+    "targetType": "executable",
+    "dependencies": {
+        "clickhoused": { "path": "../../" }
+    }
+}

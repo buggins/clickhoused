@@ -46,6 +46,10 @@ jobs:
         run: dub run :integration-tests-phobos
       - name: Integration tests (vibe.d fibers)
         run: dub run :integration-tests-vibe
+      - name: Build examples
+        run: |
+          dub build :example-basic
+          dub build :example-vibe
 
   integration:
     name: server (ClickHouse ${{ matrix.clickhouse }})
@@ -104,6 +108,12 @@ jobs:
         run: dub run :integration-tests-vibe --override-config=clickhoused/zstd
         env:
           CLICKHOUSE_COMPRESSION: zstd
+      - name: Run examples
+        run: |
+          dub run :example-basic
+          dub run :example-vibe
+        env:
+          CLICKHOUSE_DSN: clickhouse://localhost:9000
 
   lint:
     runs-on: ubuntu-latest

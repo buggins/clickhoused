@@ -53,6 +53,8 @@ final class Inserter
     private Connection conn;
     private Block current;
     private size_t currentBytes;
+    private TypeInfo structType; // the struct type `structPositions` was computed for
+    private size_t[] structPositions;
     private bool endSent;
     private bool finished;
 
@@ -157,6 +159,52 @@ final class Inserter
             {
                 appendValue(current.columns[i], value);
                 currentBytes += estimateSize(value);
+            }
+        }
+        catch (ClientException e)
+        {
+            foreach (c; current.columns)
+                c.truncate(rows);
+            throw e;
+        }
+        current.rows++;
+        if (current.rows >= maxBlockRows || currentBytes >= maxBlockBytes)
+            flush();
+    }
+
+    /++
+    Appends one row from the mapped fields of a struct (see `clickhoused.mapping`).
+    Fields are matched to the INSERT's columns by name; every column must
+    have a field.
+
+    Throws: `ClientException` if the struct does not match the columns or a
+    value does not fit (the row is then not added); `ServerException` if the
+    server reported an error.
+    +/
+    void addStruct(T)(auto ref const T value) @safe if (is(T == struct))
+    {
+        import clickhoused.mapping : IgnoreField, columnNames;
+        import std.traits : hasUDA;
+
+        checkActive();
+        if (current is null)
+            current = newBlock();
+        if (structType !is typeid(T))
+        {
+            structPositions = bindStruct(columnNames!T, T.stringof);
+            structType = typeid(T);
+        }
+        const rows = current.rows;
+        try
+        {
+            size_t k;
+            static foreach (i; 0 .. T.tupleof.length)
+            {
+                static if (!hasUDA!(T.tupleof[i], IgnoreField))
+                {
+                    appendValue(current.columns[structPositions[k++]], value.tupleof[i]);
+                    currentBytes += estimateSize(value.tupleof[i]);
+                }
             }
         }
         catch (ClientException e)
@@ -328,6 +376,28 @@ final class Inserter
             ordered.columns ~= found;
         }
         return ordered;
+    }
+
+    /// The header position of each struct column; every header column must be covered.
+    private size_t[] bindStruct(const string[] names, string typeName) const @safe
+    {
+        size_t[] positions;
+        auto covered = new bool[header.columns.length];
+        foreach (name; names)
+        {
+            size_t pos = size_t.max;
+            foreach (i, h; header.columns)
+                if (h.name == name)
+                    pos = i;
+            if (pos == size_t.max)
+                throw new ClientException("The INSERT has no column '" ~ name ~ "' for a field of " ~ typeName);
+            positions ~= pos;
+            covered[pos] = true;
+        }
+        foreach (i, h; header.columns)
+            if (!covered[i])
+                throw new ClientException(typeName ~ " has no field for column '" ~ h.name ~ "'");
+        return positions;
     }
 
     private void checkActive() const @safe

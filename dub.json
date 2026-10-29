@@ -20,7 +20,9 @@
     "subPackages": [
         "./integration-tests",
         "./integration-tests-phobos",
-        "./integration-tests-vibe"
+        "./integration-tests-vibe",
+        "./examples/basic",
+        "./examples/vibe"
     ],
     "buildTypes": {
         "docs": {
