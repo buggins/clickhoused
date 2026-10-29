@@ -14,6 +14,7 @@ Authors:   Vadim Lopatin
 module clickhoused;
 
 public import clickhoused.block;
+public import clickhoused.compress.frame : Compression, zstdAvailable;
 public import clickhoused.connection;
 public import clickhoused.exception;
 public import clickhoused.insert;

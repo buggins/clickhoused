@@ -86,12 +86,24 @@ jobs:
             ~/AppData/Local/dub/cache
           key: dub-${{ github.job }}-${{ runner.os }}-ldc-latest-${{ hashFiles('**/dub.json') }}
           restore-keys: dub-${{ github.job }}-${{ runner.os }}-ldc-latest-
+      - name: Install libzstd
+        run: sudo apt-get update && sudo apt-get install -y libzstd-dev
       - name: Server is reachable
         run: curl -sf 'http://localhost:8123/?query=SELECT%20version()'
       - name: Integration tests (threads)
         run: dub run :integration-tests-phobos
       - name: Integration tests (vibe.d fibers)
         run: dub run :integration-tests-vibe
+      - name: Unit tests with ZSTD
+        run: dub test --config=zstd
+      - name: Integration tests, LZ4 compression (threads)
+        run: dub run :integration-tests-phobos
+        env:
+          CLICKHOUSE_COMPRESSION: lz4
+      - name: Integration tests, ZSTD compression (vibe.d fibers)
+        run: dub run :integration-tests-vibe --override-config=clickhoused/zstd
+        env:
+          CLICKHOUSE_COMPRESSION: zstd
 
   lint:
     runs-on: ubuntu-latest

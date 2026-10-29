@@ -21,6 +21,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 module clickhoused.connection;
 
 import clickhoused.block : Block, readBlock, writeEmptyBlock;
+import clickhoused.compress.frame : CompressedInput, CompressedOutput, Compression, zstdAvailable;
 import clickhoused.exception;
 import clickhoused.insert : Inserter, quoteIdentifier;
 import clickhoused.io.backend : backendFor;
@@ -70,6 +71,12 @@ final class Connection
     package Transport transport;
     package BufferedReader reader;
     package BufferedWriter writer;
+    /// Readers and writers for the data part of Data packets: the same as
+    /// `reader` and `writer`, or decompressing/compressing streams over them.
+    package BufferedReader blockReader;
+    /// ditto
+    package BufferedWriter blockWriter;
+    private CompressedInput compressedInput;
     package ServerInfo server;
     package ulong effectiveRevision;
     package State state = State.closed;
@@ -195,8 +202,8 @@ final class Connection
         checkReady();
         const allSettings = mergedSettings(settings);
         guarded({
-            writeQuery(writer, effectiveRevision, identity, queryId, sql, allSettings, parameters,
-                options.quotaKey);
+            writeQuery(writer, effectiveRevision, identity, queryId, sql, compressionEnabled, allSettings,
+                parameters, options.quotaKey);
             writeEndOfData(); // no external tables
         });
         state = State.busy;
@@ -220,8 +227,8 @@ final class Connection
         checkReady();
         const allSettings = mergedSettings(settings);
         guarded({
-            writeQuery(writer, effectiveRevision, identity, null, insertQuery, allSettings, null,
-                options.quotaKey);
+            writeQuery(writer, effectiveRevision, identity, null, insertQuery, compressionEnabled, allSettings,
+                null, options.quotaKey);
             writeEndOfData(); // no external tables
         });
         state = State.busy;
@@ -278,8 +285,17 @@ final class Connection
     /// Connection settings merged with per-query `settings`.
     package string[string] mergedSettings(const string[string] settings) const @safe
     {
+        import std.conv : to;
+
         string[string] all;
         all["low_cardinality_allow_in_native_format"] = "0"; // LowCardinality is not supported yet
+        if (options.compression == Compression.lz4)
+            all["network_compression_method"] = "LZ4";
+        else if (options.compression == Compression.zstd)
+        {
+            all["network_compression_method"] = "ZSTD";
+            all["network_zstd_compression_level"] = options.zstdLevel.to!string;
+        }
         foreach (name, value; options.settings)
             all[name] = value;
         foreach (name, value; settings)
@@ -287,12 +303,36 @@ final class Connection
         return all;
     }
 
+    /// Whether data blocks are compressed on this connection.
+    package @property bool compressionEnabled() const @safe pure nothrow
+    {
+        return options.compression != Compression.none;
+    }
+
     /// Writes an empty Data packet: the end-of-data marker.
     package void writeEndOfData() @safe
     {
         writeDataHeader(writer);
-        writeEmptyBlock(writer, effectiveRevision);
+        writeEmptyBlock(blockWriter, effectiveRevision);
+        flushBlock();
+    }
+
+    /// Sends a block written to `blockWriter`, ending the compressed frame if any.
+    package void flushBlock() @safe
+    {
+        if (blockWriter !is writer)
+            blockWriter.flush();
         writer.flush();
+    }
+
+    /// Reads the rest of a Data, Totals or Extremes packet: table name and block.
+    package Block readDataBlock() @safe
+    {
+        reader.readString(); // table name, never compressed
+        auto block = readBlock(blockReader, effectiveRevision, server.timezone);
+        if (compressedInput !is null && (blockReader.buffered != 0 || !compressedInput.atFrameBoundary))
+            throw new ProtocolException("A compressed block does not end at a frame boundary");
+        return block;
     }
 
     /++
@@ -333,11 +373,27 @@ final class Connection
 
     private void connect() @safe
     {
+        if (options.compression == Compression.zstd && !zstdAvailable)
+            throw new ClientException("ZSTD compression is not compiled in: build clickhoused with the 'zstd' "
+                    ~ "configuration, or use Compression.lz4");
         transport = options.transportFactory !is null
             ? options.transportFactory(options.host, options.port, options.connectTimeout) : backendFor(
                     options.ioMode).connect(options.host, options.port, options.connectTimeout);
         reader = new BufferedReader(transport);
         writer = new BufferedWriter(transport);
+        if (compressionEnabled)
+        {
+            compressedInput = new CompressedInput(reader);
+            blockReader = new BufferedReader(compressedInput);
+            // The block writer's buffer size is the maximum frame size
+            blockWriter = new BufferedWriter(new CompressedOutput(writer, options.compression, options.zstdLevel),
+                    1024 * 1024);
+        }
+        else
+        {
+            blockReader = reader;
+            blockWriter = writer;
+        }
         state = State.ready;
         scope (failure)
             close(); // including a rejected login (ServerException)
@@ -468,8 +524,6 @@ final class QueryResult
     private void fetch() @safe
     {
         auto r = conn.reader;
-        const revision = conn.effectiveRevision;
-        const timezone = conn.server.timezone;
         bool gotBlock;
         conn.guarded({
             while (!gotBlock && !finished)
@@ -478,8 +532,7 @@ final class QueryResult
                 switch (packet)
                 {
                 case ServerPacket.data:
-                    r.readString(); // table name
-                    auto block = readBlock(r, revision, timezone);
+                    auto block = conn.readDataBlock();
                     if (header is null)
                         header = block;
                     if (block.rows > 0)
@@ -489,12 +542,10 @@ final class QueryResult
                     }
                     break;
                 case ServerPacket.totals:
-                    r.readString();
-                    totals = readBlock(r, revision, timezone);
+                    totals = conn.readDataBlock();
                     break;
                 case ServerPacket.extremes:
-                    r.readString();
-                    extremes = readBlock(r, revision, timezone);
+                    extremes = conn.readDataBlock();
                     break;
                 case ServerPacket.tableColumns:
                     // The server is waiting for INSERT data, which a plain query

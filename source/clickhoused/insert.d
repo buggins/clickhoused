@@ -84,8 +84,7 @@ final class Inserter
                 switch (packet)
                 {
                 case ServerPacket.data:
-                    r.readString();
-                    header = readBlock(r, conn.effectiveRevision, conn.server.timezone);
+                    header = conn.readDataBlock();
                     return;
                 case ServerPacket.tableColumns:
                     r.readString();
@@ -200,8 +199,8 @@ final class Inserter
             return; // an empty block would end the insert
         conn.guarded({
             writeDataHeader(conn.writer);
-            writeBlock(conn.writer, ordered, conn.effectiveRevision);
-            conn.writer.flush();
+            writeBlock(conn.blockWriter, ordered, conn.effectiveRevision);
+            conn.flushBlock();
             rowsSent += ordered.rows;
             processPendingPackets();
         });

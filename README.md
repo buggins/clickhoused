@@ -5,7 +5,7 @@
 
 A native [ClickHouse](https://clickhouse.com) client library for the [D programming language](https://dlang.org).
 
-> **Status: early development.** Connecting, running queries, reading results and inserting data work for the basic column types. Compression, TLS, struct mapping and a connection pool are not implemented yet, and the API may still change.
+> **Status: early development.** Connecting, running queries, reading results, inserting data and LZ4/ZSTD network compression work for the basic column types. TLS, struct mapping, fiber-mode sockets and a connection pool are not implemented yet, and the API may still change.
 
 ## Goals
 
@@ -16,6 +16,14 @@ A native [ClickHouse](https://clickhouse.com) client library for the [D programm
 - Planned integration with [ddbc](https://github.com/buggins/ddbc) and [hibernated](https://github.com/buggins/hibernated).
 
 Supported column types: integers, floats, Bool, String, FixedString, Date, Date32, DateTime, DateTime64, UUID, Enum8/16 and Nullable. Composite types such as Array, Tuple and Map will follow. LowCardinality columns are received as their plain type.
+
+## Compression
+
+Set `ConnectionOptions.compression` to `Compression.lz4` (pure D, always available) or `Compression.zstd`. ZSTD uses the system zstd library and needs the `zstd` dub configuration:
+
+```json
+"subConfigurations": { "clickhoused": "zstd" }
+```
 
 ## Building
 
@@ -31,6 +39,8 @@ dub run :integration-tests-vibe     # integration tests, vibe.d fiber mode
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Third-party code and its licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 

@@ -12,6 +12,7 @@ import core.exception : AssertError;
 import std.stdio : writefln, stderr;
 
 import integrationtests.basic;
+import integrationtests.compression;
 import integrationtests.insert;
 import integrationtests.server : serverConfigured;
 import integrationtests.smoke;
@@ -55,6 +56,7 @@ immutable TestCase[] allTests = [
     TestCase("large streaming insert", &testLargeInsert, true),
     TestCase("insert with defaults", &testInsertDefaults, true),
     TestCase("insert errors", &testInsertErrors, true),
+    TestCase("network compression", &testCompression, true),
 ];
 
 /// Settings passed from the runner to the tests.

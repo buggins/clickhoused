@@ -4,6 +4,7 @@ $(UL
     $(LI `CLICKHOUSE_HOST`: `host` or `host:port` (port defaults to 9000). Tests
         that need a server are skipped when it is not set.)
     $(LI `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`: credentials (default: `default`, empty).)
+    $(LI `CLICKHOUSE_COMPRESSION`: `none` (default), `lz4` or `zstd`, to run all tests compressed.)
 )
 +/
 module integrationtests.server;
@@ -37,6 +38,7 @@ ConnectionOptions serverOptions()
     options.user = environment.get("CLICKHOUSE_USER", "default");
     options.password = environment.get("CLICKHOUSE_PASSWORD", "");
     options.receiveTimeout = 30.seconds; // fail fast instead of hanging
+    options.compression = environment.get("CLICKHOUSE_COMPRESSION", "none").to!Compression;
     return options;
 }
 

@@ -157,6 +157,7 @@ Params:
     client = client identity for the client info section.
     queryId = query ID; empty lets the server generate one.
     query = SQL text.
+    compressed = whether data blocks are sent compressed (network compression).
     settings = query settings as name/value strings. They are sent with the
         IMPORTANT flag, so the server rejects unknown names instead of
         ignoring them.
@@ -164,7 +165,8 @@ Params:
     quotaKey = quota key.
 +/
 void writeQuery(BufferedWriter w, ulong revision, const ClientIdentity client, string queryId,
-        string query, const string[string] settings, const string[string] parameters, string quotaKey) @safe
+        string query, bool compressed, const string[string] settings, const string[string] parameters,
+        string quotaKey) @safe
 {
     w.writeUVarInt(ClientPacket.query);
     w.writeString(queryId);
@@ -184,7 +186,7 @@ void writeQuery(BufferedWriter w, ulong revision, const ClientIdentity client, s
     if (revision >= Revision.withInterserverSecret)
         w.writeString(""); // no inter-server secret
     w.writeUVarInt(QueryStage.complete);
-    w.writeUVarInt(0); // no compression
+    w.writeUVarInt(compressed ? 1 : 0);
     w.writeString(query);
 
     if (revision >= Revision.withParameters)
@@ -395,10 +397,10 @@ private string hostName() @safe nothrow
     // Query packet layout at the client revision
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
-    writeQuery(w, Revision.client, ClientIdentity("test", 1, 2, 3), "qid", "SELECT 1", [
-        "max_threads": "1"
-    ],
-    ["p": "it's"], "");
+    const string[string] settings = ["max_threads": "1"];
+    const string[string] parameters = ["p": "it's"];
+    writeQuery(w, Revision.client, ClientIdentity("test", 1, 2, 3), "qid", "SELECT 1", false, settings,
+            parameters, "");
     w.flush();
     t.feed(t.written);
 

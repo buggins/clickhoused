@@ -43,7 +43,7 @@ Guidance for AI coding agents working on **clickhoused**, a native D client libr
 clickhoused must remain pure BSL-1.0 code written for this project.
 
 - **Other ClickHouse clients are reference only. Never copy or translate their code.** This includes clickhouse-c, clickhouse-cpp, clickhouse-go/ch-go and the ClickHouse server, all Apache-2.0, as well as the MIT- and BSD-licensed clients. Read them to understand the protocol, then write original D code with its own structure, names and comments. Line-by-line translation (C→D, Go→D, ...) counts as copying. Wire-format facts (packet layouts, field order, constants, type encodings) are fine to reproduce.
-- **Only exception: CityHash v1.0.2.** It is an exact algorithm, so a port is unavoidable. Port it from ClickHouse's `contrib/cityhash102`, which is MIT (Copyright 2011 Google). Keep Google's MIT copyright and permission notice at the top of `compress/cityhash.d`, and list it in a third-party notices file. Note that clickhouse-c's comment calls its CityHash a "v1.0.3 variant"; ClickHouse's own header says the code predates the 1.0.3 algorithm change. Trust ClickHouse's `contrib/cityhash102`.
+- **Only exception: CityHash v1.0.2** (ported in M4 to `compress/cityhash.d`, listed in `THIRD_PARTY_NOTICES.md`). It is an exact algorithm, so a port is unavoidable. Port it from ClickHouse's `contrib/cityhash102`, which is MIT (Copyright 2011 Google). Keep Google's MIT copyright and permission notice at the top of `compress/cityhash.d`, and list it in a third-party notices file. Note that clickhouse-c's comment calls its CityHash a "v1.0.3 variant"; ClickHouse's own header says the code predates the 1.0.3 algorithm change. Trust ClickHouse's `contrib/cityhash102`.
 - **Write LZ4 from the LZ4 block format specification**, not from the reference library.
 - If any other third-party code ever seems necessary, **stop and ask the user first**.
 - The README must say the project is unofficial and not affiliated with ClickHouse, Inc. ("ClickHouse" is their trademark).
@@ -65,7 +65,9 @@ source/clickhoused/        library:
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn),
                            numeric.d, string.d, datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
                            parser.d (type-name parser), package.d (imports all)
-                           Planned: compress/, pool.d, io/vibe.d, ...
+  compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
+                           `zstd` configuration only), frame.d (Compression enum, frames, CompressedInput/Output)
+                           Planned: pool.d, io/vibe.d, ...
 integration-tests/         shared harness (dub subpackage `clickhoused:integration-tests`).
                            Tests are listed in `allTests` in source/integrationtests/harness.d.
 integration-tests-phobos/  runner for thread mode
@@ -110,6 +112,8 @@ dub test                                      # unit tests (no server needed)
 dub run :integration-tests-phobos             # integration tests, threads
 dub run :integration-tests-vibe               # integration tests, vibe.d fibers (downloads vibe-core on first run)
 CLICKHOUSE_HOST=localhost:9000 dub run :integration-tests-phobos   # also run tests that need a server
+CLICKHOUSE_COMPRESSION=lz4 ...                # run the whole suite with network compression (none/lz4/zstd)
+dub test -c zstd                              # unit tests including the libzstd binding
 
 dub run dscanner@0.15.2 -- --styleCheck .                 # lint (CI fails on any warning)
 dub run dfmt@0.15.2 -- --inplace $(git ls-files '*.d')    # format (CI fails if this changes files)
@@ -189,6 +193,16 @@ Don't modify any of these repositories unless the user explicitly asks.
 - **Native inserts get no Progress packets**, so `Inserter.finish` reports `writtenRows = rowsSent`. Inline `INSERT ... VALUES (...)` and `INSERT ... SELECT` do report progress, and run fine through `exec()`.
 - **A `TableColumns` packet means the server is waiting for data** (an INSERT, or the `input()` function). `query()`/`exec()` end such an insert with no rows and throw a `ClientException`.
 - **Raise errors where the stream is still intact outside `Connection.guarded`.** `guarded` closes the connection on any non-server exception.
+- **Network compression** (`ConnectionOptions.compression`):
+  - The Query packet carries a compression flag. The client also sends `network_compression_method`, so the server compresses its replies with the same method.
+  - Only the block part of Data, Totals and Extremes packets is compressed, in both directions. Packet codes and table names are not.
+  - At our revision, profile events and log blocks stay uncompressed; they are compressed only from revision 54481.
+  - Each block ends at a frame boundary, and `readDataBlock` checks this.
+  - All client Data packets are compressed, including the empty end-of-data blocks. Use `Connection.blockReader`/`blockWriter`, `readDataBlock`, `writeEndOfData` and `flushBlock`; never write blocks to `writer` directly.
+  - The server may send method NONE (`0x02`) frames even with compression on.
+- **ZSTD** is optional. The `zstd` dub configuration defines `version (ClickHousedZstd)` and links `libzstd`. Test it with:
+  - `dub test -c zstd`;
+  - `CLICKHOUSE_COMPRESSION=zstd dub run :integration-tests-phobos --override-config=clickhoused/zstd`.
 
 ## Initial type scope
 
@@ -234,7 +248,7 @@ These are proposed; refine them when code lands.
   - M1: wire, Phobos backend, first query (done);
   - M2: read **basic types only** (see "Initial type scope" below) (done);
   - M3: insert (done);
-  - M4: LZ4/ZSTD compression;
+  - M4: LZ4/ZSTD compression (done);
   - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org;
   - M6: ddbc driver;
   - M7: hibernated dialect;

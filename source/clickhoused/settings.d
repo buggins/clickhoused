@@ -8,6 +8,7 @@ module clickhoused.settings;
 
 import core.time : Duration, seconds;
 
+import clickhoused.compress.frame : Compression;
 import clickhoused.io.backend : IoMode;
 import clickhoused.io.transport : TransportFactory;
 
@@ -35,6 +36,16 @@ struct ConnectionOptions
     /// The server sends progress packets while a query runs, so this limits
     /// silence, not total query time.
     Duration receiveTimeout = 300.seconds;
+
+    /++
+    Network compression of data blocks in both directions. `Compression.lz4`
+    usually pays off for remote servers; for a server on the same host,
+    `Compression.none` is faster. `Compression.zstd` needs the `zstd` dub
+    configuration.
+    +/
+    Compression compression = Compression.none;
+    /// ZSTD compression level (1 to 22) for data sent to the server and requested from it.
+    int zstdLevel = 1;
 
     /// I/O backend selection.
     IoMode ioMode = IoMode.auto_;

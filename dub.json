@@ -36,6 +36,15 @@
     "configurations": [
         {
             "name": "library"
+        },
+        {
+            "name": "zstd",
+            "versions": [
+                "ClickHousedZstd"
+            ],
+            "libs": [
+                "zstd"
+            ]
         }
     ]
 }
