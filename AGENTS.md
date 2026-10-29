@@ -68,7 +68,9 @@ Note: `.gitignore` currently ignores every `docs/` directory, which is dub's gen
 
 ## Commands
 
-These are the planned commands; update this section once `dub.sdl` exists.
+The package recipe format is **`dub.json`**, matching the author's other packages (ddbc, hibernated). Don't use `dub.sdl`, and never the legacy name `package.json`. Each subpackage (`integration-tests*`, `examples/*`) gets its own `dub.json` in its directory, listed in the root `subPackages` array by path.
+
+These are the planned commands; update this section once `dub.json` exists.
 
 ```sh
 dub build                                     # library, thread mode only
