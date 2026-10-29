@@ -137,6 +137,88 @@ abstract class Column
     +/
     abstract Variant getVariant(size_t row) const @safe;
 
+    /++
+    Removes rows from the end, keeping the first `length` rows.
+    Does nothing if the column has `length` rows or fewer.
+    +/
+    abstract void truncate(size_t length) @safe;
+
+    /++
+    Appends the default value of the type: zero, an empty string,
+    1970-01-01, or NULL for a `Nullable` column.
+    +/
+    abstract void appendDefault() @safe;
+
+    /// Appends a NULL. Only `Nullable` columns accept it.
+    void appendNull() @safe
+    {
+        throw appendError("NULL", "NULL");
+    }
+
+    /// Appends a signed integer, converting it to the column type.
+    void appendLong(long value) @safe
+    {
+        throw appendError("long", value);
+    }
+
+    /// Appends an unsigned integer, converting it to the column type.
+    void appendUlong(ulong value) @safe
+    {
+        throw appendError("ulong", value);
+    }
+
+    /// Appends a floating-point number, converting it to the column type.
+    void appendDouble(double value) @safe
+    {
+        throw appendError("double", value);
+    }
+
+    /// Appends a boolean.
+    void appendBool(bool value) @safe
+    {
+        throw appendError("bool", value);
+    }
+
+    /// Appends text, parsing it if the column is not a string column.
+    void appendString(string value) @safe
+    {
+        throw appendError("string", value);
+    }
+
+    /// Appends raw bytes (for `String` and `FixedString`).
+    void appendBytes(const(ubyte)[] value) @safe
+    {
+        throw appendError("bytes", value.length);
+    }
+
+    /// Appends a calendar date.
+    void appendDate(Date value) @safe
+    {
+        throw appendError("Date", value);
+    }
+
+    /// Appends a point in time.
+    void appendSysTime(SysTime value) @safe
+    {
+        throw appendError("SysTime", value);
+    }
+
+    /// Appends a UUID.
+    void appendUUID(UUID value) @safe
+    {
+        throw appendError("UUID", value);
+    }
+
+    /// Creates the exception thrown when `value` of type `kind` cannot be stored in this column.
+    protected ClientException appendError(T)(string kind, T value) const @safe
+    {
+        import std.conv : to;
+
+        return new ClientException(
+                "Cannot store " ~ kind ~ " value '" ~ value.to!string ~ "' in column '" ~ name
+                ~ "' (" ~ typeName ~ ")");
+    }
+
     /// Creates the exception thrown when the value in `row` cannot be converted to `target`.
     protected ClientException conversionError(size_t row, string target) const @safe
     {
@@ -183,6 +265,12 @@ abstract class FixedColumn(T) : Column if (isFixedWireType!T)
     override void writeData(BufferedWriter writer) const @safe
     {
         writeFixedValues(writer, data);
+    }
+
+    override void truncate(size_t length) @safe
+    {
+        if (length < data.length)
+            data.length = length;
     }
 }
 

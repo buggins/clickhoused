@@ -31,6 +31,13 @@ interface Transport
     +/
     void write(const(ubyte)[] data) @safe;
 
+    /++
+    Whether data from the server can be read without blocking (or the server
+    closed the stream). Used to process server messages while sending a large
+    INSERT, so that neither side blocks on a full socket buffer.
+    +/
+    bool dataAvailable() @safe;
+
     /// Closes the stream. Calling it more than once is allowed.
     void close() @safe nothrow;
 

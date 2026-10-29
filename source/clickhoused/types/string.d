@@ -78,6 +78,27 @@ final class StringColumn : Column
         return makeVariant(data[row]);
     }
 
+    override void appendDefault() @safe
+    {
+        data ~= "";
+    }
+
+    override void truncate(size_t length) @safe
+    {
+        if (length < data.length)
+            data.length = length;
+    }
+
+    override void appendString(string value) @safe
+    {
+        data ~= value;
+    }
+
+    override void appendBytes(const(ubyte)[] value) @safe
+    {
+        data ~= cast(string) value.idup;
+    }
+
     private T parse(T)(size_t row) const @safe
     {
         try
@@ -177,4 +198,43 @@ final class FixedStringColumn : Column
     {
         return makeVariant(asString(row));
     }
+
+    override void appendDefault() @safe
+    {
+        bytes.length += width;
+    }
+
+    override void truncate(size_t length) @safe
+    {
+        if (length < this.length)
+            bytes.length = length * width;
+    }
+
+    /// Appends `value` padded with zero bytes. Values longer than `width` are rejected.
+    override void appendString(string value) @safe
+    {
+        appendBytes(cast(const(ubyte)[]) value);
+    }
+
+    /// ditto
+    override void appendBytes(const(ubyte)[] value) @safe
+    {
+        if (value.length > width)
+            throw appendError("bytes", value.length);
+        bytes ~= value;
+        bytes.length += width - value.length;
+    }
+}
+
+///
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.exception : ClientException;
+
+    auto c = new FixedStringColumn("code", 3, "FixedString(3)");
+    c.appendString("ab");
+    c.appendDefault();
+    assert(c.bytes == ['a', 'b', 0, 0, 0, 0]);
+    assertThrown!ClientException(c.appendString("abcd"));
 }

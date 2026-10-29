@@ -53,13 +53,15 @@ clickhoused must remain pure BSL-1.0 code written for this project.
 ```
 source/clickhoused/        library:
   package.d                public imports, version constants, clickhousedHasVibe
-  connection.d             Connection (handshake, ping, query, exec), QueryResult (range of Blocks), QueryStats
+  connection.d             Connection (handshake, ping, query, exec, beginInsert, insert), QueryResult, QueryStats
+  insert.d                 Inserter (addRow / send / flush / finish / abort), appendValue, quoteIdentifier
   settings.d               ConnectionOptions
   exception.d              ClickHouseException > ServerException / ClientException / ConnectionException / ProtocolException
   block.d                  Block, readBlock / writeBlock (native format)
   io/                      transport.d (Transport interface), backend.d (IoMode, IoBackend),
                            phobos.d (thread-mode sockets), buffer.d (BufferedReader/Writer, varint/LE/string), mock.d
-  protocol/                codes.d (packet codes, Revision constants), packets.d (Hello, Query, Exception, Progress, ...)
+  protocol/                codes.d (packet codes, Revision constants), packets.d (Hello, Query, Exception, Progress, ...),
+                           testserver.d (ScriptedServer: scripted mock server for unit tests, unittest builds only)
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn),
                            numeric.d, string.d, datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
                            parser.d (type-name parser), package.d (imports all)
@@ -92,6 +94,10 @@ Other files:
   - native protocol `localhost:9000`, HTTP `localhost:8123`;
   - user `default` with no password;
   - **server timezone `Europe/Lisbon`**, not UTC, which helps exercise DateTime timezone handling.
+- A **ClickHouse 23.8 container** (the oldest supported version) for compatibility checks:
+  - start it with `docker start clickhoused-ch23`; run tests with `CLICKHOUSE_HOST=localhost:19000`;
+  - if it's missing, create it with `docker run -d --name clickhoused-ch23 -p 19000:9000 -e CLICKHOUSE_SKIP_USER_SETUP=1 clickhouse/clickhouse-server:23.8`.
+  - Old servers type literals more strictly. For example, `[-1, 0, 1761741296789]` fails on 23.8 (no common supertype), so build such values with `toInt64(arrayJoin(['-1', ...]))`.
 - The `clickhouse` binary (26.2) is available for `clickhouse client` and `clickhouse local`. It is handy for producing golden data, e.g. `clickhouse client -q "SELECT ... FORMAT Native" > file.bin`. Docker is available for testing other server versions with the `clickhouse/clickhouse-server` images.
 
 ## Commands
@@ -173,6 +179,16 @@ Don't modify any of these repositories unless the user explicitly asks.
 - Settings are sent with the IMPORTANT flag, so unknown names fail with code 115 instead of being silently ignored.
 - Profile-event blocks (`String`, `DateTime`, `UInt64`, `Enum8`, `Int64` columns) arrive with every query at revision ≥ 54451, so their column types must always be decodable.
 - `getSetting()` returns the narrowest integer type (e.g. `UInt8`), not `UInt64`.
+- **INSERT flow:**
+  1. The client sends the query (`INSERT INTO t (a, b) VALUES`) plus an empty block.
+  2. The server replies with `TableColumns` (optional), then a header Data block with the expected names and types.
+  3. The client sends Data blocks, then an empty block, which ends the data. Never send a 0-row block in the middle: it ends the insert.
+  4. The server replies with `EndOfStream` or `Exception`.
+- **The server sends profile events after every block the client sends.** The inserter drains pending packets after each block (`Transport.dataAvailable`); otherwise both sides can block on full socket buffers.
+- **After an `Exception` during an insert,** the server discards client data until the empty end block arrives. The client must send that block if it hasn't already, or the connection stays desynchronized.
+- **Native inserts get no Progress packets**, so `Inserter.finish` reports `writtenRows = rowsSent`. Inline `INSERT ... VALUES (...)` and `INSERT ... SELECT` do report progress, and run fine through `exec()`.
+- **A `TableColumns` packet means the server is waiting for data** (an INSERT, or the `input()` function). `query()`/`exec()` end such an insert with no rows and throw a `ClientException`.
+- **Raise errors where the stream is still intact outside `Connection.guarded`.** `guarded` closes the connection on any non-server exception.
 
 ## Initial type scope
 
@@ -197,6 +213,9 @@ Column conventions:
 - Wrap values in a `Variant` with `makeVariant`. It strips `const`, so `get!T` works, and confines the `@trusted` code to one place.
 - DateTime columns without a timezone parameter get the server timezone from the handshake.
 - Timezones are resolved with `PosixTimeZone`. On Windows, which has no tz database, they fall back to UTC: the point in time stays correct, only the presentation differs.
+- Every column also implements the appenders that mirror the getters: `appendLong`, `appendUlong`, `appendDouble`, `appendBool`, `appendString` (parses non-string types), `appendBytes`, `appendDate`, `appendSysTime`, `appendUUID`, `appendNull` (Nullable only), `appendDefault`, and `truncate`.
+  - Conversions are range-checked, and a failed append must leave the column unchanged.
+  - `appendString` for DateTime types parses the text in the column timezone.
 
 Until LowCardinality is implemented, the client sends the setting `low_cardinality_allow_in_native_format=0`. With it, the server converts `LowCardinality(T)` columns to plain `T`, so those tables stay readable.
 
@@ -211,10 +230,10 @@ These are proposed; refine them when code lands.
 - Every column type needs a golden-bytes unit test and an INSERT→SELECT round-trip integration test in **both** I/O modes. Cover NULLs, empty arrays, extreme values and non-UTC timezones.
 - Commit only when the user asks.
 - Follow the milestone order:
-  - M0: scaffold;
-  - M1: wire, Phobos backend, first query;
-  - M2: read **basic types only** (see "Initial type scope" below);
-  - M3: insert;
+  - M0: scaffold (done);
+  - M1: wire, Phobos backend, first query (done);
+  - M2: read **basic types only** (see "Initial type scope" below) (done);
+  - M3: insert (done);
   - M4: LZ4/ZSTD compression;
   - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org;
   - M6: ddbc driver;

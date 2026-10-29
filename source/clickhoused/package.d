@@ -16,6 +16,7 @@ module clickhoused;
 public import clickhoused.block;
 public import clickhoused.connection;
 public import clickhoused.exception;
+public import clickhoused.insert;
 public import clickhoused.io.backend : IoMode;
 public import clickhoused.io.transport : Transport, TransportFactory;
 public import clickhoused.protocol.packets : ProfileInfo, Progress, ServerInfo;

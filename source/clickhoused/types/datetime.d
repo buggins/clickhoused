@@ -21,9 +21,9 @@ import core.time : dur;
 import std.datetime.date : Date, DateTime;
 import std.datetime.systime : SysTime, unixTimeToStdTime;
 import std.datetime.timezone : TimeZone, UTC;
-import std.typecons : Rebindable, rebindable;
 import std.variant : Variant;
 
+import clickhoused.exception : ClientException;
 import clickhoused.types.column;
 
 /// Day number of 1970-01-01 in `std.datetime`'s Gregorian day count.
@@ -71,6 +71,43 @@ final class DateColumn : FixedColumn!ushort
     {
         return makeVariant(this[row]);
     }
+
+    private enum long minDays = 0;
+    private enum long maxDays = ushort.max;
+
+    override void appendDefault() @safe
+    {
+        data ~= 0;
+    }
+
+    /// Accepts dates from 1970-01-01 to 2149-06-06.
+    override void appendDate(Date value) @safe
+    {
+        const days = value.dayOfGregorianCal - epochDayNumber;
+        if (days < minDays || days > maxDays)
+            throw appendError("Date", value);
+        data ~= cast(typeof(data[0])) days;
+    }
+
+    /// Appends the date of `value` in its own timezone.
+    override void appendSysTime(SysTime value) @safe
+    {
+        appendDate(cast(Date) value);
+    }
+
+    /// Appends days since 1970-01-01.
+    override void appendLong(long value) @safe
+    {
+        if (value < minDays || value > maxDays)
+            throw appendError("long", value);
+        data ~= cast(typeof(data[0])) value;
+    }
+
+    /// Parses `YYYY-MM-DD`.
+    override void appendString(string value) @safe
+    {
+        appendDate(parseDate(value, this));
+    }
 }
 
 /// `Date32` column: days since 1970-01-01, stored as `int` (range 1900-01-01 to 2299-12-31).
@@ -114,6 +151,43 @@ final class Date32Column : FixedColumn!int
     override Variant getVariant(size_t row) const @safe
     {
         return makeVariant(this[row]);
+    }
+
+    private enum long minDays = -25_567; // 1900-01-01
+    private enum long maxDays = 120_529; // 2299-12-31
+
+    override void appendDefault() @safe
+    {
+        data ~= 0;
+    }
+
+    /// Accepts dates from 1900-01-01 to 2299-12-31.
+    override void appendDate(Date value) @safe
+    {
+        const days = value.dayOfGregorianCal - epochDayNumber;
+        if (days < minDays || days > maxDays)
+            throw appendError("Date", value);
+        data ~= cast(typeof(data[0])) days;
+    }
+
+    /// Appends the date of `value` in its own timezone.
+    override void appendSysTime(SysTime value) @safe
+    {
+        appendDate(cast(Date) value);
+    }
+
+    /// Appends days since 1970-01-01.
+    override void appendLong(long value) @safe
+    {
+        if (value < minDays || value > maxDays)
+            throw appendError("long", value);
+        data ~= cast(typeof(data[0])) value;
+    }
+
+    /// Parses `YYYY-MM-DD`.
+    override void appendString(string value) @safe
+    {
+        appendDate(parseDate(value, this));
     }
 }
 
@@ -170,6 +244,38 @@ final class DateTimeColumn : FixedColumn!uint
     override Variant getVariant(size_t row) const @safe
     {
         return makeVariant(this[row]);
+    }
+
+    override void appendDefault() @safe
+    {
+        data ~= 0;
+    }
+
+    /// Appends the point in time, truncated to whole seconds. Accepts
+    /// 1970-01-01 00:00:00 UTC to 2106-02-07 06:28:15 UTC.
+    override void appendSysTime(SysTime value) @safe
+    {
+        appendLong(floorDiv(value.stdTime - unixTimeToStdTime(0), 10_000_000));
+    }
+
+    /// Appends midnight of `value` in the column timezone.
+    override void appendDate(Date value) @safe
+    {
+        appendSysTime(SysTime(DateTime(value), resolveTimeZone(timezone)));
+    }
+
+    /// Appends seconds since the Unix epoch.
+    override void appendLong(long value) @safe
+    {
+        if (value < 0 || value > uint.max)
+            throw appendError("long", value);
+        data ~= cast(uint) value;
+    }
+
+    /// Parses `YYYY-MM-DD hh:mm:ss` in the column timezone.
+    override void appendString(string value) @safe
+    {
+        appendSysTime(parseDateTime(value, timezone, 0, this).time);
     }
 }
 
@@ -248,6 +354,51 @@ final class DateTime64Column : FixedColumn!long
     {
         return makeVariant(this[row]);
     }
+
+    override void appendDefault() @safe
+    {
+        data ~= 0;
+    }
+
+    /// Appends the point in time, truncated to the column precision.
+    override void appendSysTime(SysTime value) @safe
+    {
+        const hnsecs = value.stdTime - unixTimeToStdTime(0);
+        if (precision <= 7)
+        {
+            data ~= floorDiv(hnsecs, pow10(7 - precision));
+            return;
+        }
+        const factor = pow10(precision - 7);
+        if (hnsecs > long.max / factor || hnsecs < long.min / factor)
+            throw appendError("SysTime", value);
+        data ~= hnsecs * factor;
+    }
+
+    /// Appends midnight of `value` in the column timezone.
+    override void appendDate(Date value) @safe
+    {
+        appendSysTime(SysTime(DateTime(value), resolveTimeZone(timezone)));
+    }
+
+    /// Appends raw ticks since the Unix epoch.
+    override void appendLong(long value) @safe
+    {
+        data ~= value;
+    }
+
+    /// Parses `YYYY-MM-DD hh:mm:ss[.fraction]` in the column timezone;
+    /// fraction digits beyond the precision are dropped.
+    override void appendString(string value) @safe
+    {
+        const parsed = parseDateTime(value, timezone, precision, this);
+        const seconds = parsed.time.toUnixTime!long;
+        const scale = pow10(precision);
+        // seconds * scale + fraction, where 0 <= fraction < scale
+        if (seconds > (long.max - parsed.fraction) / scale || seconds < long.min / scale)
+            throw appendError("string", value);
+        data ~= seconds * scale + parsed.fraction;
+    }
 }
 
 /++
@@ -259,10 +410,10 @@ immutable(TimeZone) resolveTimeZone(string name) @safe
     if (name.length == 0 || name == "UTC")
         return UTC();
     if (auto cached = name in timeZoneCache)
-        return cached.get;
-    immutable(TimeZone) zone = loadTimeZone(name);
-    timeZoneCache[name] = rebindable(zone);
-    return zone;
+        return cached.zone;
+    auto entry = new CachedZone(loadTimeZone(name));
+    timeZoneCache[name] = entry;
+    return entry.zone;
 }
 
 ///
@@ -315,7 +466,126 @@ immutable(TimeZone) resolveTimeZone(string name) @safe
     assert(resolveTimeZone("No/Such_Zone") is UTC());
 }
 
-private Rebindable!(immutable TimeZone)[string] timeZoneCache;
+private final class CachedZone
+{
+    immutable TimeZone zone;
+
+    this(immutable TimeZone zone) @safe pure nothrow
+    {
+        this.zone = zone;
+    }
+}
+
+private CachedZone[string] timeZoneCache;
+
+private long floorDiv(long a, long b) @safe pure nothrow @nogc
+{
+    long q = a / b;
+    if (a % b < 0)
+        q--;
+    return q;
+}
+
+/// Parses `YYYY-MM-DD`.
+private Date parseDate(string value, const Column column) @safe
+{
+    import std.datetime.date : DateTimeException;
+
+    try
+        return Date.fromISOExtString(value);
+    catch (DateTimeException)
+        throw new ClientException("Cannot parse '" ~ value ~ "' as a date for column '" ~ column.name ~ "'");
+}
+
+/// Result of `parseDateTime`.
+private struct ParsedDateTime
+{
+    /// Whole seconds, as a point in time.
+    SysTime time;
+    /// Fractional seconds, scaled to the requested number of digits.
+    long fraction;
+}
+
+/// Parses `YYYY-MM-DD hh:mm:ss[.fraction]` as local time in `timezone`, with
+/// the fraction scaled to `precision` digits.
+private ParsedDateTime parseDateTime(string value, string timezone, uint precision, const Column column) @safe
+{
+    ParsedDateTime result;
+    long fraction;
+    import std.algorithm.searching : findSplit;
+    import std.array : replace;
+    import std.ascii : isDigit;
+    import std.datetime.date : DateTimeException;
+
+    ClientException failure()
+    {
+        return new ClientException("Cannot parse '" ~ value ~ "' as a date and time for column '" ~ column.name ~ "'");
+    }
+
+    auto parts = value.findSplit(".");
+    if (parts[1].length)
+    {
+        foreach (i, char c; parts[2])
+        {
+            if (!isDigit(c))
+                throw failure();
+            if (i < precision)
+                fraction = fraction * 10 + (c - '0');
+        }
+        foreach (i; parts[2].length .. precision)
+            fraction *= 10;
+    }
+    try
+        result.time = SysTime(DateTime.fromISOExtString(parts[0].replace(" ", "T")), resolveTimeZone(timezone));
+    catch (DateTimeException)
+        throw failure();
+    result.fraction = fraction;
+    return result;
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+
+    // Appending dates and times, round-tripping through the getters
+    auto d = new DateColumn("d");
+    d.appendDate(Date(2025, 10, 29));
+    d.appendString("1970-01-01");
+    d.appendSysTime(SysTime(DateTime(2025, 10, 29, 23, 0, 0), UTC()));
+    assert(d.getString(0) == "2025-10-29" && d.data[1] == 0 && d.getString(2) == "2025-10-29");
+    assertThrown!ClientException(d.appendDate(Date(1969, 12, 31)));
+    assertThrown!ClientException(d.appendString("29.10.2025"));
+
+    auto d32 = new Date32Column("d");
+    d32.appendDate(Date(1900, 1, 1));
+    assertThrown!ClientException(d32.appendDate(Date(2300, 1, 1)));
+
+    auto t = new DateTimeColumn("t", "DateTime('UTC')", "UTC");
+    t.appendString("2025-10-29 12:34:56");
+    t.appendSysTime(SysTime(DateTime(2025, 10, 29, 12, 34, 56), UTC()) + dur!"msecs"(999));
+    t.appendDate(Date(1970, 1, 2));
+    assert(t.data == [1_761_741_296, 1_761_741_296, 86_400]);
+    assertThrown!ClientException(t.appendLong(-1));
+
+    auto t64 = new DateTime64Column("t", 3, "DateTime64(3, 'UTC')", "UTC");
+    t64.appendString("2025-10-29 12:34:56.7891");
+    t64.appendString("1969-12-31 23:59:59.5");
+    t64.appendSysTime(SysTime(DateTime(1970, 1, 1), UTC()) - dur!"hnsecs"(1));
+    assert(t64.data == [1_761_741_296_789, -500, -1]);
+    assert(t64.getString(0) == "2025-10-29 12:34:56.789");
+
+    auto t9 = new DateTime64Column("t", 9, "DateTime64(9)", "UTC");
+    t9.appendSysTime(SysTime(DateTime(1970, 1, 1), UTC()) + dur!"hnsecs"(3));
+    assert(t9.data == [300]);
+    assertThrown!ClientException(t9.appendSysTime(SysTime(DateTime(2299, 1, 1), UTC())));
+
+    version (Posix)
+    {
+        auto tokyo = new DateTimeColumn("t", "DateTime('Asia/Tokyo')", "Asia/Tokyo");
+        tokyo.appendString("1970-01-01 09:00:00");
+        assert(tokyo.data == [0]);
+    }
+}
 
 private immutable(TimeZone) loadTimeZone(string name) @safe
 {

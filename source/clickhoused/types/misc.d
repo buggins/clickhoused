@@ -74,6 +74,33 @@ final class UUIDColumn : Column
         return makeVariant(data[row]);
     }
 
+    override void appendDefault() @safe
+    {
+        data ~= UUID.init;
+    }
+
+    override void truncate(size_t length) @safe
+    {
+        if (length < data.length)
+            data.length = length;
+    }
+
+    override void appendUUID(UUID value) @safe
+    {
+        data ~= value;
+    }
+
+    /// Parses the canonical form.
+    override void appendString(string value) @safe
+    {
+        import std.uuid : UUIDParsingException;
+
+        try
+            data ~= UUID(value);
+        catch (UUIDParsingException)
+            throw appendError("string", value);
+    }
+
     private static ubyte[16] swapHalves(const ubyte[16] bytes) @safe pure nothrow @nogc
     {
         ubyte[16] r;
@@ -163,6 +190,33 @@ final class EnumColumn(T) : FixedColumn!T if (is(T == byte) || is(T == short))
     override Variant getVariant(size_t row) const @safe
     {
         return makeVariant(label(row));
+    }
+
+    /// Appends the smallest defined value.
+    override void appendDefault() @safe
+    {
+        T smallest = T.max;
+        foreach (v; labels.byKey)
+            if (v < smallest)
+                smallest = v;
+        data ~= labels.length ? smallest : 0;
+    }
+
+    /// Appends the value of the label `value`.
+    override void appendString(string value) @safe
+    {
+        if (auto v = value in values)
+            data ~= *v;
+        else
+            throw appendError("string", value);
+    }
+
+    /// Appends a numeric value; it must be one of the defined values.
+    override void appendLong(long value) @safe
+    {
+        if (value < T.min || value > T.max || (cast(T) value) !in labels)
+            throw appendError("long", value);
+        data ~= cast(T) value;
     }
 }
 
@@ -307,6 +361,79 @@ final class NullableColumn : Column
         return nulls[row] ? Variant.init : nested.getVariant(row);
     }
 
+    /// Appends a NULL.
+    override void appendDefault() @safe
+    {
+        appendNull();
+    }
+
+    override void truncate(size_t length) @safe
+    {
+        if (length < nulls.length)
+            nulls.length = length;
+        nested.truncate(length);
+    }
+
+    override void appendNull() @safe
+    {
+        nested.appendDefault();
+        nulls ~= true;
+    }
+
+    override void appendLong(long value) @safe
+    {
+        nested.appendLong(value);
+        nulls ~= false;
+    }
+
+    override void appendUlong(ulong value) @safe
+    {
+        nested.appendUlong(value);
+        nulls ~= false;
+    }
+
+    override void appendDouble(double value) @safe
+    {
+        nested.appendDouble(value);
+        nulls ~= false;
+    }
+
+    override void appendBool(bool value) @safe
+    {
+        nested.appendBool(value);
+        nulls ~= false;
+    }
+
+    override void appendString(string value) @safe
+    {
+        nested.appendString(value);
+        nulls ~= false;
+    }
+
+    override void appendBytes(const(ubyte)[] value) @safe
+    {
+        nested.appendBytes(value);
+        nulls ~= false;
+    }
+
+    override void appendDate(Date value) @safe
+    {
+        nested.appendDate(value);
+        nulls ~= false;
+    }
+
+    override void appendSysTime(SysTime value) @safe
+    {
+        nested.appendSysTime(value);
+        nulls ~= false;
+    }
+
+    override void appendUUID(UUID value) @safe
+    {
+        nested.appendUUID(value);
+        nulls ~= false;
+    }
+
     private void checkNotNull(size_t row) const @safe
     {
         import std.conv : to;
@@ -381,4 +508,48 @@ final class NothingColumn : Column
     {
         return Variant.init;
     }
+
+    override void appendDefault() @safe
+    {
+        rows++;
+    }
+
+    override void truncate(size_t length) @safe
+    {
+        if (length < rows)
+            rows = length;
+    }
+
+    override void appendNull() @safe
+    {
+        rows++;
+    }
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.types.numeric : UInt8Column;
+
+    // Appending to UUID, Enum and Nullable columns
+    auto id = new UUIDColumn("id");
+    id.appendString("00112233-4455-6677-8899-aabbccddeeff");
+    id.appendDefault();
+    assert(id.getString(0) == "00112233-4455-6677-8899-aabbccddeeff" && id.data[1] == UUID.init);
+    assertThrown!ClientException(id.appendString("nope"));
+
+    auto e = new Enum8Column("e", "Enum8('a' = 5, 'b' = -3)", ["a": 5, "b": -3]);
+    e.appendString("a");
+    e.appendLong(-3);
+    e.appendDefault();
+    assert(e.data == [5, -3, -3]);
+    assertThrown!ClientException(e.appendString("c"));
+    assertThrown!ClientException(e.appendLong(4));
+
+    auto n = new NullableColumn("n", "Nullable(UInt8)", new UInt8Column("n", "UInt8"));
+    n.appendLong(7);
+    n.appendNull();
+    assert(n.nulls == [false, true] && (cast(UInt8Column) n.nested).data == [7, 0]);
+    assertThrown!ClientException(n.appendLong(300));
+    assert(n.length == 2); // a failed append leaves the column unchanged
 }

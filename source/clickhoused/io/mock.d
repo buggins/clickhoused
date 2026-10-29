@@ -67,6 +67,12 @@ final class MockTransport : Transport
         written ~= data;
     }
 
+    /// True while fed bytes remain.
+    override bool dataAvailable() @safe
+    {
+        return input.length > 0;
+    }
+
     override void close() @safe nothrow
     {
         closed = true;

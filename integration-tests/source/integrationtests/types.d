@@ -61,12 +61,13 @@ void testDateTimeTypes()
                 4294967295]), '`
                 ~ tz ~ `') AS v, toString(v) AS s`);
         conn.checkAgainstServerText(
-                `SELECT fromUnixTimestamp64Milli(arrayJoin([-1, 0, 1761741296789]), '`
+                `SELECT fromUnixTimestamp64Milli(toInt64(arrayJoin(['-1', '0', '1761741296789'])), '`
                 ~ tz ~ `') AS v, toString(v) AS s`);
     }
-    conn.checkAgainstServerText(`SELECT fromUnixTimestamp64Micro(arrayJoin([-1, 1761741296123456]), 'UTC') AS v,
+    conn.checkAgainstServerText(`SELECT fromUnixTimestamp64Micro(toInt64(arrayJoin(['-1', '1761741296123456'])),
+            'UTC') AS v,
             toString(v) AS s`);
-    conn.checkAgainstServerText(`SELECT fromUnixTimestamp64Nano(arrayJoin([-1, 0, 1761741296123456789]),
+    conn.checkAgainstServerText(`SELECT fromUnixTimestamp64Nano(toInt64(arrayJoin(['-1', '0', '1761741296123456789'])),
             'Asia/Tokyo') AS v, toString(v) AS s`);
     conn.checkAgainstServerText(`SELECT toDateTime64('2025-10-29 12:34:56', 0, 'UTC') AS v, toString(v) AS s`);
 

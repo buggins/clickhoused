@@ -12,6 +12,7 @@ import core.exception : AssertError;
 import std.stdio : writefln, stderr;
 
 import integrationtests.basic;
+import integrationtests.insert;
 import integrationtests.server : serverConfigured;
 import integrationtests.smoke;
 import integrationtests.types;
@@ -49,6 +50,11 @@ immutable TestCase[] allTests = [
     TestCase("Nullable", &testNullable, true),
     TestCase("cell getters", &testCellGetters, true),
     TestCase("callbacks", &testCallbacks, true),
+    TestCase("insert all types", &testInsertAllTypes, true),
+    TestCase("insert a block", &testInsertBlock, true),
+    TestCase("large streaming insert", &testLargeInsert, true),
+    TestCase("insert with defaults", &testInsertDefaults, true),
+    TestCase("insert errors", &testInsertErrors, true),
 ];
 
 /// Settings passed from the runner to the tests.

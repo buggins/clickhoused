@@ -5,7 +5,7 @@
 
 A native [ClickHouse](https://clickhouse.com) client library for the [D programming language](https://dlang.org).
 
-> **Status: early development.** Connecting, running queries and reading results work for the basic column types. Inserting data, compression, TLS and a connection pool are not implemented yet, and the API may still change.
+> **Status: early development.** Connecting, running queries, reading results and inserting data work for the basic column types. Compression, TLS, struct mapping and a connection pool are not implemented yet, and the API may still change.
 
 ## Goals
 

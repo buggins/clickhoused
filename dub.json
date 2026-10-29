@@ -1,7 +1,9 @@
 {
     "name": "clickhoused",
     "description": "Native ClickHouse client for D: pure-D native TCP protocol, blocking (Phobos) and fiber (vibe.d) I/O",
-    "authors": ["Vadim Lopatin"],
+    "authors": [
+        "Vadim Lopatin"
+    ],
     "copyright": "Copyright © 2026, Vadim Lopatin",
     "license": "BSL-1.0",
     "homepage": "https://github.com/buggins/clickhoused",
@@ -10,13 +12,27 @@
         "frontend": ">=2.105"
     },
     "dependencies": {
-        "vibe-core": { "version": "~>2.14", "optional": true }
+        "vibe-core": {
+            "version": "~>2.14",
+            "optional": true
+        }
     },
     "subPackages": [
         "./integration-tests",
         "./integration-tests-phobos",
         "./integration-tests-vibe"
     ],
+    "buildTypes": {
+        "docs": {
+            "buildOptions": [
+                "syntaxOnly"
+            ],
+            "dflags": [
+                "-Dddocs",
+                "-oq"
+            ]
+        }
+    },
     "configurations": [
         {
             "name": "library"

@@ -50,6 +50,16 @@ final class PhobosTransport : Transport
         }
     }
 
+    override bool dataAvailable() @safe
+    {
+        auto readable = new SocketSet;
+        readable.add(socket);
+        try
+            return Socket.select(readable, null, null, Duration.zero) > 0;
+        catch (SocketException e)
+            throw new ConnectionException("Socket select failed: " ~ e.msg);
+    }
+
     override void close() @safe nothrow
     {
         try
@@ -205,8 +215,12 @@ private string portString(ushort port) @safe pure
         got += server.receive(received[got .. $]);
     assert(received == [1, 2, 3]);
 
+    assert(!client.dataAvailable);
     server.send([7]);
     ubyte[1] reply;
+    while (!client.dataAvailable)
+    {
+    }
     assert(client.read(reply[]) == 1 && reply[0] == 7);
     assert(client.connected);
 }

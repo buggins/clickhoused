@@ -22,6 +22,7 @@ module clickhoused.connection;
 
 import clickhoused.block : Block, readBlock, writeEmptyBlock;
 import clickhoused.exception;
+import clickhoused.insert : Inserter, quoteIdentifier;
 import clickhoused.io.backend : backendFor;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
 import clickhoused.io.transport : Transport;
@@ -58,21 +59,21 @@ collector does not close it.
 +/
 final class Connection
 {
-    private enum State
+    package enum State
     {
         closed,
         ready,
         busy,
     }
 
-    private ConnectionOptions options;
-    private Transport transport;
-    private BufferedReader reader;
-    private BufferedWriter writer;
-    private ServerInfo server;
-    private ulong effectiveRevision;
-    private State state = State.closed;
-    private ClientIdentity identity;
+    package ConnectionOptions options;
+    package Transport transport;
+    package BufferedReader reader;
+    package BufferedWriter writer;
+    package ServerInfo server;
+    package ulong effectiveRevision;
+    package State state = State.closed;
+    package ClientIdentity identity;
 
     /// Called for every progress packet with the counters' increments.
     /// The accumulated totals are in `QueryResult.stats`.
@@ -192,22 +193,68 @@ final class Connection
             const string[string] parameters = null, string queryId = null) @safe
     {
         checkReady();
-        string[string] allSettings;
-        allSettings["low_cardinality_allow_in_native_format"] = "0"; // LowCardinality is not supported yet
-        foreach (name, value; options.settings)
-            allSettings[name] = value;
-        foreach (name, value; settings)
-            allSettings[name] = value;
-
+        const allSettings = mergedSettings(settings);
         guarded({
             writeQuery(writer, effectiveRevision, identity, queryId, sql, allSettings, parameters,
                 options.quotaKey);
-            writeDataHeader(writer);
-            writeEmptyBlock(writer, effectiveRevision); // no external tables
-            writer.flush();
+            writeEndOfData(); // no external tables
         });
         state = State.busy;
         return new QueryResult(this);
+    }
+
+    /++
+    Starts an INSERT whose data is sent from the client.
+
+    Params:
+        insertQuery = an INSERT without data, e.g. `INSERT INTO t (a, b) VALUES`.
+        settings = query settings, overriding `ConnectionOptions.settings`.
+
+    Returns: an `Inserter` for sending the rows. The connection is busy until
+        `Inserter.finish` or `Inserter.abort` is called.
+    Throws: `ServerException` if the server rejects the query (e.g. an unknown table);
+        `ClientException` if the connection is closed or busy.
+    +/
+    Inserter beginInsert(string insertQuery, const string[string] settings = null) @safe
+    {
+        checkReady();
+        const allSettings = mergedSettings(settings);
+        guarded({
+            writeQuery(writer, effectiveRevision, identity, null, insertQuery, allSettings, null,
+                options.quotaKey);
+            writeEndOfData(); // no external tables
+        });
+        state = State.busy;
+        return new Inserter(this);
+    }
+
+    /++
+    Inserts the rows of `block` into `table`, matching columns by name.
+
+    Params:
+        table = table name, inserted into the SQL as is (quote it if needed, e.g. with `quoteIdentifier`).
+        block = rows to insert; its columns must have the table's types.
+        settings = query settings, overriding `ConnectionOptions.settings`.
+
+    Returns: statistics of the insert.
+    Throws: `ClientException` if the block does not match the table (nothing is inserted);
+        `ServerException` if the insert fails on the server.
+    +/
+    QueryStats insert(string table, Block block, const string[string] settings = null) @safe
+    {
+        string columns;
+        foreach (i, c; block.columns)
+            columns ~= (i ? ", " : "") ~ quoteIdentifier(c.name);
+        auto ins = beginInsert("INSERT INTO " ~ table ~ " (" ~ columns ~ ") VALUES", settings);
+        try
+            ins.send(block);
+        catch (ClientException e)
+        {
+            if (!ins.isFinished && isOpen)
+                ins.finish(); // ends the insert with no rows
+            throw e;
+        }
+        return ins.finish();
     }
 
     /++
@@ -226,6 +273,62 @@ final class Connection
         auto result = query(sql, settings, parameters);
         result.close();
         return result.stats;
+    }
+
+    /// Connection settings merged with per-query `settings`.
+    package string[string] mergedSettings(const string[string] settings) const @safe
+    {
+        string[string] all;
+        all["low_cardinality_allow_in_native_format"] = "0"; // LowCardinality is not supported yet
+        foreach (name, value; options.settings)
+            all[name] = value;
+        foreach (name, value; settings)
+            all[name] = value;
+        return all;
+    }
+
+    /// Writes an empty Data packet: the end-of-data marker.
+    package void writeEndOfData() @safe
+    {
+        writeDataHeader(writer);
+        writeEmptyBlock(writer, effectiveRevision);
+        writer.flush();
+    }
+
+    /++
+    Reads the body of an informational packet (progress, profile info, profile
+    events, log) and dispatches it to `stats` and the callbacks.
+
+    Returns: false if `packet` is not an informational packet; nothing is read then.
+    +/
+    package bool readInfoPacket(ulong packet, ref QueryStats stats) @safe
+    {
+        switch (packet)
+        {
+        case ServerPacket.progress:
+            const increment = readProgress(reader, effectiveRevision);
+            stats.progress.add(increment);
+            if (onProgress !is null)
+                onProgress(increment);
+            return true;
+        case ServerPacket.profileInfo:
+            stats.profileInfo = readProfileInfo(reader);
+            return true;
+        case ServerPacket.profileEvents:
+            reader.readString();
+            auto events = readBlock(reader, effectiveRevision, server.timezone);
+            if (onProfileEvents !is null)
+                onProfileEvents(events);
+            return true;
+        case ServerPacket.log:
+            reader.readString();
+            auto entries = readBlock(reader, effectiveRevision, server.timezone);
+            if (onLog !is null)
+                onLog(entries);
+            return true;
+        default:
+            return false;
+        }
     }
 
     private void connect() @safe
@@ -254,7 +357,7 @@ final class Connection
         });
     }
 
-    private void checkReady() const @safe
+    package void checkReady() const @safe
     {
         if (state == State.closed)
             throw new ClientException("Connection is closed");
@@ -264,7 +367,7 @@ final class Connection
 
     /// Runs `action`. Any error except a `ServerException` received between
     /// queries leaves the stream in an unknown state, so the connection is closed.
-    private void guarded(scope void delegate() @safe action) @safe
+    package void guarded(scope void delegate() @safe action) @safe
     {
         try
             action();
@@ -277,7 +380,7 @@ final class Connection
         }
     }
 
-    private static ProtocolException unexpectedPacket(ulong packet, string expected) @safe
+    package static ProtocolException unexpectedPacket(ulong packet, string expected) @safe
     {
         import std.conv : to;
 
@@ -301,6 +404,7 @@ final class QueryResult
     private Connection conn;
     private Block current;
     private bool finished;
+    private bool insertWithoutData;
 
     /// Column names and types, without rows. Null until the server sends them
     /// (some statements, e.g. DDL, have no result columns at all).
@@ -392,30 +496,13 @@ final class QueryResult
                     r.readString();
                     extremes = readBlock(r, revision, timezone);
                     break;
-                case ServerPacket.progress:
-                    const increment = readProgress(r, revision);
-                    stats.progress.add(increment);
-                    if (conn.onProgress !is null)
-                        conn.onProgress(increment);
-                    break;
-                case ServerPacket.profileInfo:
-                    stats.profileInfo = readProfileInfo(r);
-                    break;
-                case ServerPacket.profileEvents:
-                    r.readString();
-                    auto events = readBlock(r, revision, timezone);
-                    if (conn.onProfileEvents !is null)
-                        conn.onProfileEvents(events);
-                    break;
-                case ServerPacket.log:
-                    r.readString();
-                    auto entries = readBlock(r, revision, timezone);
-                    if (conn.onLog !is null)
-                        conn.onLog(entries);
-                    break;
                 case ServerPacket.tableColumns:
+                    // The server is waiting for INSERT data, which a plain query
+                    // cannot supply: end the insert with no rows and report it.
                     r.readString(); // table name
                     r.readString(); // columns description
+                    conn.writeEndOfData();
+                    insertWithoutData = true;
                     break;
                 case ServerPacket.exception:
                     auto e = readException(r);
@@ -425,10 +512,18 @@ final class QueryResult
                     finish();
                     break;
                 default:
-                    throw Connection.unexpectedPacket(packet, "query result");
+                    if (!conn.readInfoPacket(packet, stats))
+                        throw Connection.unexpectedPacket(packet, "query result");
                 }
             }
         });
+        // Outside `guarded`: the stream is intact and the connection stays usable
+        if (finished && insertWithoutData)
+        {
+            insertWithoutData = false;
+            throw new ClientException("The query expects INSERT data, which query() and exec() cannot send: "
+                    ~ "use Connection.beginInsert or Connection.insert, or put the VALUES in the query text");
+        }
     }
 
     private void finish() @safe nothrow
@@ -441,95 +536,14 @@ final class QueryResult
 
 version (unittest)
 {
-    import clickhoused.io.mock : MockTransport;
+    import clickhoused.protocol.testserver : ScriptedServer;
     import clickhoused.types.numeric : UInt8Column;
-
-    /// Builds server packets for scripted-server tests.
-    private final class ServerScript
-    {
-        MockTransport transport;
-        BufferedWriter w;
-
-        this() @safe
-        {
-            transport = new MockTransport;
-            w = new BufferedWriter(transport);
-        }
-
-        void hello() @safe
-        {
-            w.writeUVarInt(ServerPacket.hello);
-            w.writeString("ClickHouse");
-            w.writeUVarInt(26);
-            w.writeUVarInt(11);
-            w.writeUVarInt(54_492);
-            w.writeString("UTC");
-            w.writeString("test");
-            w.writeUVarInt(1);
-        }
-
-        void dataBlock(ubyte[] values) @safe
-        {
-            import clickhoused.block : writeBlock;
-
-            auto block = new Block;
-            auto c = new UInt8Column("x", "UInt8");
-            c.data = values;
-            block.columns = [c];
-            block.rows = values.length;
-            w.writeUVarInt(ServerPacket.data);
-            w.writeString("");
-            writeBlock(w, block, Revision.client);
-        }
-
-        void progress(ulong rows) @safe
-        {
-            w.writeUVarInt(ServerPacket.progress);
-            foreach (v; [rows, rows * 8, 0, 0, 0, 1000])
-                w.writeUVarInt(v);
-        }
-
-        void exception(int code, string message) @safe
-        {
-            w.writeUVarInt(ServerPacket.exception);
-            w.writeFixed(code);
-            w.writeString("DB::Exception");
-            w.writeString(message);
-            w.writeString("");
-            w.writeFixed(false);
-        }
-
-        void endOfStream() @safe
-        {
-            w.writeUVarInt(ServerPacket.endOfStream);
-        }
-
-        Connection connect() @safe
-        {
-            w.flush();
-            transport.feed(transport.written);
-            transport.clearWritten();
-            ConnectionOptions options;
-            options.transportFactory = (host, port, timeout) => cast(Transport) transport;
-            return new Connection(options);
-        }
-
-        /// Queues more server output on an already connected script.
-        void send() @safe
-        {
-            const before = transport.written.length;
-            w.flush();
-            auto data = transport.written[before .. $].dup;
-            transport.written = transport.written[0 .. before];
-            transport.feed(data);
-        }
-    }
 }
 
 @safe unittest
 {
     // Handshake, then a query returning header + two data blocks
-    auto s = new ServerScript;
+    auto s = new ScriptedServer;
     s.hello();
     auto conn = s.connect();
     assert(conn.serverInfo.versionMajor == 26 && conn.revision == Revision.client);
@@ -557,7 +571,7 @@ version (unittest)
     import std.exception : assertThrown, collectException;
 
     // Server errors keep the connection usable; misuse while busy is rejected
-    auto s = new ServerScript;
+    auto s = new ScriptedServer;
     s.hello();
     auto conn = s.connect();
 
@@ -581,7 +595,7 @@ version (unittest)
     import std.exception : assertThrown;
 
     // A stream cut in the middle of a block closes the connection
-    auto s = new ServerScript;
+    auto s = new ScriptedServer;
     s.hello();
     auto conn = s.connect();
     s.w.writeUVarInt(ServerPacket.data);
@@ -601,7 +615,7 @@ version (unittest)
     import std.exception : assertThrown;
 
     // Login failure
-    auto s = new ServerScript;
+    auto s = new ScriptedServer;
     s.exception(516, "Authentication failed");
     assertThrown!ServerException(s.connect());
 }
