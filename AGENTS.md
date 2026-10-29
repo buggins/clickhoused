@@ -6,10 +6,13 @@ Guidance for AI coding agents working on **clickhoused**, a native D client libr
 
 - **What:** a pure-D client (connector) for ClickHouse over the **native TCP protocol** (port 9000; 9440 with TLS). It will be published on code.dlang.org as the dub package `clickhoused`. That name was confirmed free on 2026-10-29, and no other ClickHouse package exists on dub.
 - **Repo:** `git@github.com:buggins/clickhoused.git`, default branch `main`. The author is Vadim Lopatin (GitHub `buggins`), who also maintains ddbc.
-- **License:** BSL-1.0 (Boost), the proposed default. Check PLAN.md §2 for whether it is still open.
-- **Status:** planning phase. **The design lives in [`PLAN.md`](PLAN.md); read it before making changes.** Do not start implementation work unless the user asks for it. When a design decision changes, update PLAN.md in the same change.
+- **License:** BSL-1.0 (Boost), the proposed default.
+- **Status:** planning phase. Do not start implementation work unless the user asks for it.
+- **`PLAN.md` (local and optional):** the detailed design plan is kept as a local, untracked file. It is excluded through `.git/info/exclude` and is not part of the repository, so it may be missing in your checkout.
+  - If it is present, read it before making design-level changes and keep it up to date when a design decision changes. Never `git add` it.
+  - If it is absent, this file is the reference. The `§` numbers below point to PLAN.md sections and can be ignored.
 
-## Key design rules (details in PLAN.md)
+## Key design rules
 
 1. **Pure D.** The wire protocol, column codecs, LZ4 and CityHash are written in D. C libraries (ZSTD, OpenSSL) are allowed **only** behind optional dub dependencies or configurations. The default build has zero dependencies.
 2. **CityHash must be v1.0.2**, the version ClickHouse uses for compressed-block checksums. The current CityHash gives different results. Validate against vectors produced by ClickHouse.
@@ -46,7 +49,7 @@ Note: `.gitignore` currently ignores every `docs/` directory, which is dub's gen
 ## Local environment
 
 - WSL2 Linux. The compiler is **LDC 1.36.0** (`ldc2`, frontend 2.106); **DMD is not installed**. DUB 1.36.0.
-- The target minimum D frontend is 2.105. Don't use language or Phobos features newer than that without updating PLAN.md.
+- The target minimum D frontend is 2.105. Don't use language or Phobos features newer than that without the user's agreement.
 - A **ClickHouse 26.11 server runs locally**:
   - native protocol `localhost:9000`, HTTP `localhost:8123`;
   - user `default` with no password;
@@ -76,7 +79,7 @@ CLICKHOUSE_HOST=localhost:9000 dub run ...    # server address for integration t
   - `source/ddbc/core.d` (Driver, Connection, Statement, ResultSet, DialectType);
   - `source/ddbc/common.d` (DriverFactory, pool);
   - `source/ddbc/drivers/mysqlddbc.d` (the closest model).
-  - Known hazard there: the per-connection `core.sync.mutex.Mutex` is recursive and owned by a thread, so it does not protect against two vibe fibers on one thread (PLAN.md §7.3).
+  - Known hazard there: the per-connection `core.sync.mutex.Mutex` is recursive and owned by a thread, so it does not protect against two vibe fibers on one thread. The ClickHouse driver must use the lock that clickhoused provides for the active I/O mode.
 
 Don't modify those repositories unless the user explicitly asks.
 
@@ -102,4 +105,14 @@ These are proposed; refine them when code lands.
 - Use `@safe` by default, with small `@trusted` blocks only in the I/O and reinterpret-cast hot paths, each with a comment explaining why it is safe.
 - Ddoc comments on every public symbol (docs are generated on dpldocs.info).
 - Every column type needs a golden-bytes unit test and an INSERT→SELECT round-trip integration test in **both** I/O modes. Cover NULLs, empty arrays, extreme values and non-UTC timezones.
-- Commit only when the user asks. Follow the milestone order in PLAN.md §8.
+- Commit only when the user asks.
+- Follow the milestone order:
+  - M0: scaffold;
+  - M1: wire, Phobos backend, first query;
+  - M2: read all common types;
+  - M3: insert;
+  - M4: LZ4/ZSTD compression;
+  - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org;
+  - M6: ddbc driver;
+  - M7: TLS and production features;
+  - M8: Variant/Dynamic/JSON → 1.0.
