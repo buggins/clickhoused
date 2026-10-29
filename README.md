@@ -5,7 +5,7 @@
 
 A native [ClickHouse](https://clickhouse.com) client library for the [D programming language](https://dlang.org).
 
-> **Status: early development.** The project scaffold is in place, and the protocol implementation has not started yet. The API is not usable yet.
+> **Status: early development.** Connecting, running queries and reading results work for the basic column types. Inserting data, compression, TLS and a connection pool are not implemented yet, and the API may still change.
 
 ## Goals
 
@@ -15,7 +15,7 @@ A native [ClickHouse](https://clickhouse.com) client library for the [D programm
 - **Streaming** for large SELECT results and batched INSERTs.
 - Planned integration with [ddbc](https://github.com/buggins/ddbc) and [hibernated](https://github.com/buggins/hibernated).
 
-The first releases will support basic column types: integers, floats, Bool, String, FixedString, Date/DateTime types, UUID, Enum and Nullable. Composite types such as Array, Tuple, Map and LowCardinality will follow.
+Supported column types: integers, floats, Bool, String, FixedString, Date, Date32, DateTime, DateTime64, UUID, Enum8/16 and Nullable. Composite types such as Array, Tuple and Map will follow. LowCardinality columns are received as their plain type.
 
 ## Building
 

@@ -10,7 +10,8 @@ module clickhoused.block;
 import clickhoused.exception : ClientException, ProtocolException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
 import clickhoused.protocol.codes : Revision;
-import clickhoused.types.column : Column, createColumn;
+import clickhoused.types.column : Column;
+import clickhoused.types.factory : createColumn;
 
 /// Extra block attributes, used by distributed aggregation.
 struct BlockInfo
@@ -63,7 +64,7 @@ final class Block
 ///
 @safe unittest
 {
-    import clickhoused.types.column : UInt64Column;
+    import clickhoused.types.numeric : UInt64Column;
 
     auto block = new Block;
     auto ids = new UInt64Column("id", "UInt64");
@@ -80,12 +81,15 @@ private enum size_t maxBlockColumns = 1_000_000;
 /++
 Reads a block in the native format at protocol revision `revision`.
 
+`defaultTimezone` is the timezone for `DateTime` columns whose type has no
+explicit timezone; normally the server timezone.
+
 Throws:
     `ProtocolException` on malformed data;
     `ClientException` if a column has a type this version does not support.
     In both cases the stream position is lost and the connection must be closed.
 +/
-Block readBlock(BufferedReader reader, ulong revision) @safe
+Block readBlock(BufferedReader reader, ulong revision, string defaultTimezone = null) @safe
 {
     auto block = new Block;
     if (revision > 0)
@@ -105,7 +109,7 @@ Block readBlock(BufferedReader reader, ulong revision) @safe
         const typeName = reader.readString();
         if (revision >= Revision.withCustomSerialization && reader.readByte() != 0)
             throw new ProtocolException("Column '" ~ name ~ "': custom serialization is not supported");
-        auto column = createColumn(name, typeName);
+        auto column = createColumn(name, typeName, defaultTimezone);
         if (block.rows)
             column.readData(reader, block.rows);
         block.columns ~= column;
@@ -175,7 +179,8 @@ private void writeBlockInfo(BufferedWriter writer, BlockInfo info) @safe
 @safe unittest
 {
     import clickhoused.io.mock : MockTransport;
-    import clickhoused.types.column : StringColumn, UInt8Column;
+    import clickhoused.types.numeric : UInt8Column;
+    import clickhoused.types.string : StringColumn;
 
     // Block round trip
     auto t = new MockTransport;

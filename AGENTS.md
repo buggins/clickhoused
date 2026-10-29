@@ -60,7 +60,9 @@ source/clickhoused/        library:
   io/                      transport.d (Transport interface), backend.d (IoMode, IoBackend),
                            phobos.d (thread-mode sockets), buffer.d (BufferedReader/Writer, varint/LE/string), mock.d
   protocol/                codes.d (packet codes, Revision constants), packets.d (Hello, Query, Exception, Progress, ...)
-  types/                   parser.d (type-name parser), column.d (Column classes, createColumn)
+  types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn),
+                           numeric.d, string.d, datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
+                           parser.d (type-name parser), package.d (imports all)
                            Planned: compress/, pool.d, io/vibe.d, ...
 integration-tests/         shared harness (dub subpackage `clickhoused:integration-tests`).
                            Tests are listed in `allTests` in source/integrationtests/harness.d.
@@ -186,7 +188,15 @@ Everything else comes later:
 - Decimal, Int/UInt128/256, IPv4/IPv6;
 - Geo types, Variant/Dynamic/JSON.
 
-An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
+These types are implemented (milestone M2). An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
+
+Column conventions:
+- Every column keeps its values raw, as on the wire, in a public array (`data`, or `bytes` for FixedString), and converts on access. For example, `DateTimeColumn.data` is `uint[]` epoch seconds, and `opIndex` returns a `SysTime`.
+- Every column implements the base `Column` getters that make sense for it: `getLong`, `getUlong`, `getDouble`, `getBool`, `getString`, `getBytes`, `getDate`, `getSysTime`, `getUUID`, `getVariant`, `isNull`. The others throw `ClientException`.
+- `getString` must produce exactly the server's `toString()` text. The integration tests check this against the server.
+- Wrap values in a `Variant` with `makeVariant`. It strips `const`, so `get!T` works, and confines the `@trusted` code to one place.
+- DateTime columns without a timezone parameter get the server timezone from the handshake.
+- Timezones are resolved with `PosixTimeZone`. On Windows, which has no tz database, they fall back to UTC: the point in time stays correct, only the presentation differs.
 
 Until LowCardinality is implemented, the client sends the setting `low_cardinality_allow_in_native_format=0`. With it, the server converts `LowCardinality(T)` columns to plain `T`, so those tables stay readable.
 

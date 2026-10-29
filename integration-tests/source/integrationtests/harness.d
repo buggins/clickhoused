@@ -14,6 +14,7 @@ import std.stdio : writefln, stderr;
 import integrationtests.basic;
 import integrationtests.server : serverConfigured;
 import integrationtests.smoke;
+import integrationtests.types;
 
 /// Integration test entry point. Throws on failure.
 alias TestFunction = void function();
@@ -42,6 +43,12 @@ immutable TestCase[] allTests = [
     TestCase("busy connection", &testBusyConnection, true),
     TestCase("LowCardinality arrives as plain type", &testLowCardinality, true),
     TestCase("settings and parameters", &testSettingsAndParameters, true),
+    TestCase("date and time types", &testDateTimeTypes, true),
+    TestCase("UUID", &testUUID, true),
+    TestCase("Enum8 and Enum16", &testEnums, true),
+    TestCase("Nullable", &testNullable, true),
+    TestCase("cell getters", &testCellGetters, true),
+    TestCase("callbacks", &testCallbacks, true),
 ];
 
 /// Settings passed from the runner to the tests.

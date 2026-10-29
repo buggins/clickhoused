@@ -74,6 +74,24 @@ final class Connection
     private State state = State.closed;
     private ClientIdentity identity;
 
+    /// Called for every progress packet with the counters' increments.
+    /// The accumulated totals are in `QueryResult.stats`.
+    void delegate(const Progress increment) @safe onProgress;
+
+    /++
+    Called with every block of profile events (server performance counters).
+    Columns: `host_name`, `current_time`, `thread_id`, `type`, `name`, `value`.
+    The server sends them unless the setting `send_profile_events` is 0.
+    +/
+    void delegate(Block events) @safe onProfileEvents;
+
+    /++
+    Called with every block of server log entries. The server sends them only
+    when the setting `send_logs_level` is set, e.g. to `"trace"`. Columns include
+    `event_time`, `priority`, `source` and `text`.
+    +/
+    void delegate(Block entries) @safe onLog;
+
     /++
     Opens a connection and performs the handshake.
 
@@ -347,6 +365,7 @@ final class QueryResult
     {
         auto r = conn.reader;
         const revision = conn.effectiveRevision;
+        const timezone = conn.server.timezone;
         bool gotBlock;
         conn.guarded({
             while (!gotBlock && !finished)
@@ -356,7 +375,7 @@ final class QueryResult
                 {
                 case ServerPacket.data:
                     r.readString(); // table name
-                    auto block = readBlock(r, revision);
+                    auto block = readBlock(r, revision, timezone);
                     if (header is null)
                         header = block;
                     if (block.rows > 0)
@@ -367,22 +386,32 @@ final class QueryResult
                     break;
                 case ServerPacket.totals:
                     r.readString();
-                    totals = readBlock(r, revision);
+                    totals = readBlock(r, revision, timezone);
                     break;
                 case ServerPacket.extremes:
                     r.readString();
-                    extremes = readBlock(r, revision);
+                    extremes = readBlock(r, revision, timezone);
                     break;
                 case ServerPacket.progress:
-                    stats.progress.add(readProgress(r, revision));
+                    const increment = readProgress(r, revision);
+                    stats.progress.add(increment);
+                    if (conn.onProgress !is null)
+                        conn.onProgress(increment);
                     break;
                 case ServerPacket.profileInfo:
                     stats.profileInfo = readProfileInfo(r);
                     break;
                 case ServerPacket.profileEvents:
+                    r.readString();
+                    auto events = readBlock(r, revision, timezone);
+                    if (conn.onProfileEvents !is null)
+                        conn.onProfileEvents(events);
+                    break;
                 case ServerPacket.log:
                     r.readString();
-                    readBlock(r, revision); // not exposed yet
+                    auto entries = readBlock(r, revision, timezone);
+                    if (conn.onLog !is null)
+                        conn.onLog(entries);
                     break;
                 case ServerPacket.tableColumns:
                     r.readString(); // table name
@@ -413,7 +442,7 @@ final class QueryResult
 version (unittest)
 {
     import clickhoused.io.mock : MockTransport;
-    import clickhoused.types.column : UInt8Column;
+    import clickhoused.types.numeric : UInt8Column;
 
     /// Builds server packets for scripted-server tests.
     private final class ServerScript

@@ -20,7 +20,7 @@ public import clickhoused.io.backend : IoMode;
 public import clickhoused.io.transport : Transport, TransportFactory;
 public import clickhoused.protocol.packets : ProfileInfo, Progress, ServerInfo;
 public import clickhoused.settings;
-public import clickhoused.types.column;
+public import clickhoused.types;
 
 /// Library version, reported to the server in the client Hello packet.
 enum uint clickhousedVersionMajor = 0;
