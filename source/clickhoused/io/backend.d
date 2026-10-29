@@ -151,7 +151,10 @@ private void warnIfBlockingEventLoop() @safe nothrow
     warned = true;
     try
     {
-        import std.logger : warning;
+        static if (__traits(compiles, () { import std.logger; }))
+            import std.logger : warning;
+        else
+            import std.experimental.logger : warning; // frontend < 2.101
 
         warning("clickhoused: IoMode.phobos is used inside a vibe.d task; blocking sockets stall the event loop. "
                 ~ "Use IoMode.auto_ or IoMode.vibe.");

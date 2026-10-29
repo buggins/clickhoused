@@ -9,7 +9,7 @@
     "homepage": "https://github.com/buggins/clickhoused",
     "targetType": "library",
     "toolchainRequirements": {
-        "frontend": ">=2.105"
+        "frontend": ">=2.097"
     },
     "dependencies": {
         "vibe-core": {

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
+## 0.1.1 — 2026-10-29
+
+### Changed
+- The minimum D frontend is now **2.097** (DMD 2.097+, LDC 1.27+, GDC 12+), the same as ddbc, instead of 2.105. This lets ddbc offer a ClickHouse driver without raising its own minimum compiler.
+- Logging falls back to `std.experimental.logger` on compilers without `std.logger`.
+
 ## 0.1.0 — 2026-10-29
 
 First public release.

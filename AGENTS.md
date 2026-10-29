@@ -89,7 +89,7 @@ The root `/docs/` folder is generated API documentation (`dub build -b docs`) an
 
 Other files:
 - `.github/workflows/ci.yml`: CI with three jobs.
-  - `test`: Linux/Windows/macOS × DMD/LDC, plus the minimum frontend 2.105.
+  - `test`: Linux/Windows/macOS × DMD/LDC, plus the minimum frontend 2.097.
   - `integration`: a ClickHouse service container for 23.8, 25.8, 26.8 and latest.
   - `lint`: dscanner, dfmt and the docs build.
 - `.editorconfig`: editor and dfmt settings.
@@ -98,9 +98,9 @@ Other files:
 ## Local environment
 
 - WSL2 Linux. The compiler is **LDC 1.36.0** (`ldc2`, frontend 2.106); **DMD is not installed**. DUB 1.36.0.
-- The target minimum D frontend is 2.105. Don't use language or Phobos features newer than that without the user's agreement.
-  - Frontend 2.105 warns about things newer compilers accept, notably unreachable statements after a `throw` in a `version`/`else` branch, and dub turns warnings into errors.
-  - Before pushing, build and test with LDC 1.35.0: download `https://github.com/ldc-developers/ldc/releases/download/v1.35.0/ldc2-1.35.0-linux-x86_64.tar.xz` into the scratchpad, then run dub with `--compiler=<path>/bin/ldc2`.
+- The target minimum D frontend is **2.097**, the same as ddbc. ddbc depends on clickhoused, and dub enforces the compiler requirements of the dependencies of *all* configurations, so a higher minimum here would break every ddbc build on older compilers. Don't use language or Phobos features newer than 2.097 without the user's agreement. For example, `std.logger` is 2.101+, so fall back to `std.experimental.logger`.
+  - Old frontends warn about things newer compilers accept, notably unreachable statements after a `throw` in a `version`/`else` branch, and dub turns warnings into errors.
+  - Before pushing, build and test with LDC 1.27.1: download `https://github.com/ldc-developers/ldc/releases/download/v1.27.1/ldc2-1.27.1-linux-x86_64.tar.xz` into the scratchpad, then run dub with `--compiler=<path>/bin/ldc2`.
 - A **ClickHouse 26.11 server runs locally**:
   - native protocol `localhost:9000`, HTTP `localhost:8123`;
   - user `default` with no password;

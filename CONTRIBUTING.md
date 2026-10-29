@@ -4,7 +4,7 @@ Thank you for your interest in contributing.
 
 ## Development setup
 
-- A D compiler with frontend **2.105 or newer**: DMD 2.105+, LDC 1.35+ or GDC 14+.
+- A D compiler with frontend **2.097 or newer**: DMD 2.097+, LDC 1.27+ or GDC 12+.
 - [dub](https://code.dlang.org).
 - For integration tests that need a server: a ClickHouse server reachable on the native port, e.g.
 

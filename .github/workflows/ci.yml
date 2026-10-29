@@ -16,9 +16,9 @@ jobs:
         include:
           - { os: ubuntu-latest, dc: dmd-latest }
           - { os: ubuntu-latest, dc: ldc-latest }
-          # Minimum supported D frontend: 2.105
-          - { os: ubuntu-latest, dc: dmd-2.105.3 }
-          - { os: ubuntu-latest, dc: ldc-1.35.0 }
+          # Minimum supported D frontend: 2.097 (the same as ddbc)
+          - { os: ubuntu-latest, dc: dmd-2.097.2 }
+          - { os: ubuntu-latest, dc: ldc-1.27.1 }
           - { os: windows-latest, dc: dmd-latest }
           - { os: windows-latest, dc: ldc-latest }
           # DMD does not target arm64 macOS runners
