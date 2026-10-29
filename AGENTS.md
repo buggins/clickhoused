@@ -27,7 +27,14 @@ Guidance for AI coding agents working on **clickhoused**, a native D client libr
    - Cancel is the only operation allowed from another thread or task.
    - Any broken stream poisons the connection, which is never returned to the pool.
    - In fiber mode a connection is bound to the thread that created it.
-5. **Revision-gated protocol fields:** every field that depends on the negotiated protocol revision must be guarded with an explicit `if (revision >= DBMS_MIN_...)` check. Verify each one against ClickHouse `src/Core/ProtocolDefines.h`. A mistake desynchronizes the stream silently.
+5. **Revision-gated protocol fields:** every field that depends on the negotiated protocol revision must be guarded with an explicit `if (revision >= Revision.withXxx)` check (constants are in `protocol/codes.d`). Verify each one against ClickHouse `src/Core/ProtocolDefines.h`. A mistake desynchronizes the stream silently.
+   - The client speaks revision **54460** (`Revision.client`, the same as clickhouse-go). The effective revision is `min(client, server)`.
+   - The server gates its Hello fields on the *client's* revision, so the client must gate everything on the effective revision.
+   - 54460 deliberately stays below:
+     - sparse serialization (54465);
+     - chunked packets (54470);
+     - the new String size-stream encoding (54492).
+     Raising it means implementing every feature in between.
 6. **ddbc compatibility (§7):** keep the dynamic per-cell access layer, the column metadata, `QueryStats`, `formatLiteral`, and `ConnectionOptions.fromParams(string[string])` working. The planned ddbc driver depends on all of them.
 7. **Decoders must be robust.** Malformed or truncated input throws `ProtocolException`. Never crash, and never allocate based on an unchecked length.
 
@@ -44,8 +51,17 @@ clickhoused must remain pure BSL-1.0 code written for this project.
 ## Layout
 
 ```
-source/clickhoused/        library; package.d exists (version constants, clickhousedHasVibe).
-                           Planned: io/, compress/, protocol/, types/, connection.d, pool.d, ...
+source/clickhoused/        library:
+  package.d                public imports, version constants, clickhousedHasVibe
+  connection.d             Connection (handshake, ping, query, exec), QueryResult (range of Blocks), QueryStats
+  settings.d               ConnectionOptions
+  exception.d              ClickHouseException > ServerException / ClientException / ConnectionException / ProtocolException
+  block.d                  Block, readBlock / writeBlock (native format)
+  io/                      transport.d (Transport interface), backend.d (IoMode, IoBackend),
+                           phobos.d (thread-mode sockets), buffer.d (BufferedReader/Writer, varint/LE/string), mock.d
+  protocol/                codes.d (packet codes, Revision constants), packets.d (Hello, Query, Exception, Progress, ...)
+  types/                   parser.d (type-name parser), column.d (Column classes, createColumn)
+                           Planned: compress/, pool.d, io/vibe.d, ...
 integration-tests/         shared harness (dub subpackage `clickhoused:integration-tests`).
                            Tests are listed in `allTests` in source/integrationtests/harness.d.
 integration-tests-phobos/  runner for thread mode
@@ -54,7 +70,7 @@ examples/                  (planned) one dub subpackage per example
 bench/                     (planned) benchmarks
 ```
 
-To add an integration test, write a `void function()` that throws on failure in an `integrationtests.*` module, and append it to `allTests`. Both runners then pick it up.
+To add an integration test, write a `void function()` that throws on failure in an `integrationtests.*` module, and append it to `allTests` (set `needsServer` if it talks to ClickHouse). Both runners then pick it up. Server tests use `connectToServer()` from `integrationtests.server`, and the `firstBlock()` helper in `integrationtests.basic`.
 
 The root `/docs/` folder is generated API documentation (`dub build -b docs`) and is git-ignored. Hand-written documentation goes to `doc/`.
 
@@ -85,14 +101,14 @@ dub build                                     # library, thread mode only (no de
 dub test                                      # unit tests (no server needed)
 dub run :integration-tests-phobos             # integration tests, threads
 dub run :integration-tests-vibe               # integration tests, vibe.d fibers (downloads vibe-core on first run)
-CLICKHOUSE_HOST=localhost:9000 dub run ...    # (planned) server address for integration tests
+CLICKHOUSE_HOST=localhost:9000 dub run :integration-tests-phobos   # also run tests that need a server
 
 dub run dscanner@0.15.2 -- --styleCheck .                 # lint (CI fails on any warning)
 dub run dfmt@0.15.2 -- --inplace $(git ls-files '*.d')    # format (CI fails if this changes files)
 dub build -b docs                                         # generate API docs into /docs/
 ```
 
-Run the lint and format commands before committing D code. The tool versions are pinned so CI results stay stable. dfmt 0.15.2 mangles lambdas with attributes (`() nothrow {` becomes `() nothrow{`), so use named nested functions instead.
+Run the lint and format commands before committing D code. The tool versions are pinned so CI results stay stable. dfmt 0.15.2 mangles lambdas with attributes (`() nothrow {` becomes `() nothrow{`), so use named nested functions instead. dfmt sometimes needs two passes to settle; run it twice when it changes files.
 
 Notes:
 - `vibe-core` is an **optional** dependency of the root package, so a plain `dub build` never includes it.
@@ -147,6 +163,14 @@ Don't modify any of these repositories unless the user explicitly asks.
   - `vibe.core.sync` (`TaskMutex`, `LocalTaskSemaphore`, `TaskCondition`)
   - `vibe.core.core` (`runTask`, `sleep`, `yield`, `Task.getThis`)
   - `vibe-stream:tls` 1.5 for TLS.
+
+## Protocol behaviour learned from the real server
+
+- A `QueryResult` keeps the connection busy until it is exhausted or `close()`d. Taking `.front` alone is not enough.
+- After most `ServerException`s the connection stays usable. Errors the server detects while still reading the Query packet (unknown setting name, unparsable setting value) are different: the server closes the connection right after sending the exception, and the next call fails with `ConnectionException`.
+- Settings are sent with the IMPORTANT flag, so unknown names fail with code 115 instead of being silently ignored.
+- Profile-event blocks (`String`, `DateTime`, `UInt64`, `Enum8`, `Int64` columns) arrive with every query at revision ≥ 54451, so their column types must always be decodable.
+- `getSetting()` returns the narrowest integer type (e.g. `UInt8`), not `UInt64`.
 
 ## Initial type scope
 

@@ -28,6 +28,16 @@ jobs:
       - uses: dlang-community/setup-dlang@v2.0.0
         with:
           compiler: ${{ matrix.dc }}
+      - name: Cache dub packages and builds
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.dub/packages
+            ~/.dub/cache
+            ~/AppData/Local/dub/packages
+            ~/AppData/Local/dub/cache
+          key: dub-${{ github.job }}-${{ runner.os }}-${{ matrix.dc }}-${{ hashFiles('**/dub.json') }}
+          restore-keys: dub-${{ github.job }}-${{ runner.os }}-${{ matrix.dc }}-
       - name: Build library
         run: dub build
       - name: Unit tests
@@ -66,6 +76,16 @@ jobs:
       - uses: dlang-community/setup-dlang@v2.0.0
         with:
           compiler: ldc-latest
+      - name: Cache dub packages and builds
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.dub/packages
+            ~/.dub/cache
+            ~/AppData/Local/dub/packages
+            ~/AppData/Local/dub/cache
+          key: dub-${{ github.job }}-${{ runner.os }}-ldc-latest-${{ hashFiles('**/dub.json') }}
+          restore-keys: dub-${{ github.job }}-${{ runner.os }}-ldc-latest-
       - name: Server is reachable
         run: curl -sf 'http://localhost:8123/?query=SELECT%20version()'
       - name: Integration tests (threads)
@@ -80,6 +100,16 @@ jobs:
       - uses: dlang-community/setup-dlang@v2.0.0
         with:
           compiler: ldc-latest
+      - name: Cache dub packages and builds
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.dub/packages
+            ~/.dub/cache
+            ~/AppData/Local/dub/packages
+            ~/AppData/Local/dub/cache
+          key: dub-${{ github.job }}-${{ runner.os }}-ldc-latest-${{ hashFiles('**/dub.json') }}
+          restore-keys: dub-${{ github.job }}-${{ runner.os }}-ldc-latest-
       - name: D-Scanner style check
         run: dub run -q dscanner@0.15.2 -- --styleCheck .
       - name: dfmt formatting check

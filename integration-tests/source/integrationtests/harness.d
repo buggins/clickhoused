@@ -2,12 +2,17 @@
 Integration test harness shared by the thread (Phobos) and fiber (vibe.d)
 runners. Tests are written once here; each runner calls `runAllTests` in its
 own I/O context.
+
+Tests marked `needsServer` run only when the `CLICKHOUSE_HOST` environment
+variable is set (see `integrationtests.server`); otherwise they are skipped.
 +/
 module integrationtests.harness;
 
 import core.exception : AssertError;
 import std.stdio : writefln, stderr;
 
+import integrationtests.basic;
+import integrationtests.server : serverConfigured;
 import integrationtests.smoke;
 
 /// Integration test entry point. Throws on failure.
@@ -20,11 +25,23 @@ struct TestCase
     string name;
     /// Test body.
     TestFunction run;
+    /// Whether the test needs a ClickHouse server.
+    bool needsServer;
 }
 
 /// All integration tests, in execution order.
 immutable TestCase[] allTests = [
     TestCase("library metadata", &testLibraryMetadata),
+    TestCase("handshake and ping", &testHandshakeAndPing, true),
+    TestCase("SELECT 1", &testSelectOne, true),
+    TestCase("many blocks", &testManyBlocks, true),
+    TestCase("basic types", &testBasicTypes, true),
+    TestCase("DDL and INSERT ... SELECT", &testDdlAndInsertSelect, true),
+    TestCase("server error keeps connection", &testServerError, true),
+    TestCase("unsupported type closes connection", &testUnsupportedType, true),
+    TestCase("busy connection", &testBusyConnection, true),
+    TestCase("LowCardinality arrives as plain type", &testLowCardinality, true),
+    TestCase("settings and parameters", &testSettingsAndParameters, true),
 ];
 
 /// Settings passed from the runner to the tests.
@@ -47,9 +64,18 @@ Returns: the number of failed tests.
 int runAllTests(RunnerContext runner)
 {
     currentRunner = runner;
-    int failures;
+    const withServer = serverConfigured();
+    if (!withServer)
+        writefln("[%s] CLICKHOUSE_HOST is not set: skipping tests that need a server", runner.name);
+    int failures, skipped;
     foreach (test; allTests)
     {
+        if (test.needsServer && !withServer)
+        {
+            skipped++;
+            writefln("[%s] SKIP  %s", runner.name, test.name);
+            continue;
+        }
         // Tests may fail with `enforce` (Exception) or `assert` (AssertError).
         try
         {
@@ -59,7 +85,7 @@ int runAllTests(RunnerContext runner)
         catch (AssertError e)
         {
             failures++;
-            stderr.writefln("[%s] FAIL  %s: %s", runner.name, test.name, e.msg);
+            stderr.writefln("[%s] FAIL  %s: %s (%s:%s)", runner.name, test.name, e.msg, e.file, e.line);
         }
         catch (Exception e)
         {
@@ -67,6 +93,6 @@ int runAllTests(RunnerContext runner)
             stderr.writefln("[%s] FAIL  %s: %s", runner.name, test.name, e.msg);
         }
     }
-    writefln("[%s] %d test(s), %d failed", runner.name, allTests.length, failures);
+    writefln("[%s] %d test(s), %d failed, %d skipped", runner.name, allTests.length, failures, skipped);
     return failures;
 }
