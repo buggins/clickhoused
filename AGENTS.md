@@ -7,7 +7,8 @@ Guidance for AI coding agents working on **clickhoused**, a native D client libr
 - **What:** a pure-D client (connector) for ClickHouse over the **native TCP protocol** (port 9000; 9440 with TLS). It will be published on code.dlang.org as the dub package `clickhoused`. That name was confirmed free on 2026-10-29, and no other ClickHouse package exists on dub.
 - **Repo:** `git@github.com:buggins/clickhoused.git`, default branch `main`. The author is Vadim Lopatin (GitHub `buggins`), who also maintains ddbc.
 - **License:** BSL-1.0 (Boost), the same as Phobos, ddbc and mysql-native. This was decided on 2026-10-29. It could still change while the author is the sole contributor; see "Licensing rules" below.
-- **Status:** planning phase. Do not start implementation work unless the user asks for it.
+- **Status:** 0.1.0 released on 2026-10-29: tag `v0.1.0`, GitHub release, listed on code.dlang.org (https://code.dlang.org/packages/clickhoused), docs on https://clickhoused.dpldocs.info/.
+  - New releases: update the version constants in `source/clickhoused/package.d` and `CHANGELOG.md`, then push a `vX.Y.Z` tag (the registry picks it up). Tag and publish only when the user asks.
 - **`PLAN.md` (local and optional):** the detailed design plan is kept as a local, untracked file. It is excluded through `.git/info/exclude` and is not part of the repository, so it may be missing in your checkout.
   - If it is present, read it before making design-level changes and keep it up to date when a design decision changes. Never `git add` it.
   - If it is absent, this file is the reference. The `§` numbers below point to PLAN.md sections and can be ignored.
@@ -281,7 +282,7 @@ These are proposed; refine them when code lands.
   - M2: read **basic types only** (see "Initial type scope" below) (done);
   - M3: insert (done);
   - M4: LZ4/ZSTD compression (done);
-  - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org (done; release tagging and registration on code.dlang.org are done by the user);
+  - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org (done, released);
   - M6: ddbc driver;
   - M7: hibernated dialect;
   - M8: TLS, composite types and production features;

@@ -1,6 +1,8 @@
 # clickhoused
 
 [![CI](https://github.com/buggins/clickhoused/actions/workflows/ci.yml/badge.svg)](https://github.com/buggins/clickhoused/actions/workflows/ci.yml)
+[![DUB](https://img.shields.io/dub/v/clickhoused)](https://code.dlang.org/packages/clickhoused)
+[![Docs](https://img.shields.io/badge/docs-dpldocs-blue.svg)](https://clickhoused.dpldocs.info/)
 [![License: BSL-1.0](https://img.shields.io/badge/license-BSL--1.0-blue.svg)](LICENSE)
 
 A native [ClickHouse](https://clickhouse.com) client library for the [D programming language](https://dlang.org).
@@ -16,7 +18,7 @@ Supports ClickHouse 23.8 and newer, and D compilers with frontend 2.105 or newer
 
 ## Installation
 
-Add clickhoused to your `dub.json`:
+clickhoused is on [code.dlang.org](https://code.dlang.org/packages/clickhoused). Add it to your `dub.json`:
 
 ```json
 "dependencies": {
@@ -160,7 +162,7 @@ CLICKHOUSE_HOST=localhost:9000 dub run :integration-tests-phobos   # integration
 CLICKHOUSE_HOST=localhost:9000 dub run :integration-tests-vibe     # integration tests, vibe.d fibers
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md), and third-party code in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+API documentation: [clickhoused.dpldocs.info](https://clickhoused.dpldocs.info/). See [CONTRIBUTING.md](CONTRIBUTING.md). Changes are listed in [CHANGELOG.md](CHANGELOG.md), and third-party code in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 
