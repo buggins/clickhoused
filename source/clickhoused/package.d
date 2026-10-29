@@ -22,17 +22,24 @@ enum uint clickhousedVersionPatch = 1;
 
 /// Library version as a string, e.g. `"0.0.1"`.
 enum string clickhousedVersion = versionString(clickhousedVersionMajor,
-    clickhousedVersionMinor, clickhousedVersionPatch);
+            clickhousedVersionMinor, clickhousedVersionPatch);
 
 /// Client name reported to the server in the client Hello packet.
 enum string clickhousedClientName = "clickhoused";
 
-/// True when vibe-core support is compiled in (vibe-core is in the
-/// application's dependency graph).
 version (Have_vibe_core)
-    enum bool clickhousedHasVibe = true;
+    private enum bool hasVibeCore = true;
 else
-    enum bool clickhousedHasVibe = false;
+    private enum bool hasVibeCore = false;
+
+/++
+True when vibe-core support is compiled in.
+
+dub defines `Have_vibe_core` when vibe-core is anywhere in the application's
+dependency graph. clickhoused then supports fiber mode in addition to the
+always-available thread mode.
++/
+enum bool clickhousedHasVibe = hasVibeCore;
 
 private string versionString(uint major, uint minor, uint patch) pure @safe
 {
@@ -41,8 +48,14 @@ private string versionString(uint major, uint minor, uint patch) pure @safe
     return major.to!string ~ "." ~ minor.to!string ~ "." ~ patch.to!string;
 }
 
+///
 @safe unittest
 {
-    static assert(clickhousedVersion == "0.0.1");
-    static assert(clickhousedClientName == "clickhoused");
+    assert(clickhousedVersion == "0.0.1");
+    assert(clickhousedClientName == "clickhoused");
+}
+
+@safe unittest
+{
+    assert(versionString(1, 22, 333) == "1.22.333");
 }

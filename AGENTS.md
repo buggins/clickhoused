@@ -56,7 +56,15 @@ bench/                     (planned) benchmarks
 
 To add an integration test, write a `void function()` that throws on failure in an `integrationtests.*` module, and append it to `allTests`. Both runners then pick it up.
 
-Note: `.gitignore` currently ignores every `docs/` directory, which is dub's generated docs output. Don't put hand-written docs there until that entry is narrowed (a planned M0 task).
+The root `/docs/` folder is generated API documentation (`dub build -b docs`) and is git-ignored. Hand-written documentation goes to `doc/`.
+
+Other files:
+- `.github/workflows/ci.yml`: CI with three jobs.
+  - `test`: Linux/Windows/macOS × DMD/LDC, plus the minimum frontend 2.105.
+  - `integration`: a ClickHouse service container for 23.8, 25.8, 26.8 and latest.
+  - `lint`: dscanner, dfmt and the docs build.
+- `.editorconfig`: editor and dfmt settings.
+- `CONTRIBUTING.md`: contributor rules, including licensing.
 
 ## Local environment
 
@@ -78,7 +86,13 @@ dub test                                      # unit tests (no server needed)
 dub run :integration-tests-phobos             # integration tests, threads
 dub run :integration-tests-vibe               # integration tests, vibe.d fibers (downloads vibe-core on first run)
 CLICKHOUSE_HOST=localhost:9000 dub run ...    # (planned) server address for integration tests
+
+dub run dscanner@0.15.2 -- --styleCheck .                 # lint (CI fails on any warning)
+dub run dfmt@0.15.2 -- --inplace $(git ls-files '*.d')    # format (CI fails if this changes files)
+dub build -b docs                                         # generate API docs into /docs/
 ```
+
+Run the lint and format commands before committing D code. The tool versions are pinned so CI results stay stable. dfmt 0.15.2 mangles lambdas with attributes (`() nothrow {` becomes `() nothrow{`), so use named nested functions instead.
 
 Notes:
 - `vibe-core` is an **optional** dependency of the root package, so a plain `dub build` never includes it.
@@ -158,7 +172,8 @@ These are proposed; refine them when code lands.
 
 - Module names: `clickhoused.<area>.<name>`. Public API is re-exported from `clickhoused/package.d`.
 - Use `@safe` by default, with small `@trusted` blocks only in the I/O and reinterpret-cast hot paths, each with a comment explaining why it is safe.
-- Ddoc comments on every public symbol (docs are generated on dpldocs.info).
+- **Every public symbol gets a Ddoc comment** (`///` or `/++ ... +/`), following common D library practice. Docs are generated on dpldocs.info, and dscanner flags undocumented public declarations. Use the standard Ddoc sections where useful (`Params:`, `Returns:`, `Throws:`, `See_Also:`), and `/// ditto` for groups.
+- **Put small unit tests inside modules**, next to the code they test. A `///` documented unittest right after a public symbol becomes its usage example in the docs; prefer that for public API. Plain `unittest` blocks are fine for internal details.
 - Every column type needs a golden-bytes unit test and an INSERT→SELECT round-trip integration test in **both** I/O modes. Cover NULLs, empty arrays, extreme values and non-UTC timezones.
 - Commit only when the user asks.
 - Follow the milestone order:

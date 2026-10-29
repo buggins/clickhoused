@@ -5,6 +5,7 @@ own I/O context.
 +/
 module integrationtests.harness;
 
+import core.exception : AssertError;
 import std.stdio : writefln, stderr;
 
 import integrationtests.smoke;
@@ -15,7 +16,9 @@ alias TestFunction = void function();
 /// A named integration test.
 struct TestCase
 {
+    /// Test name used in reports.
     string name;
+    /// Test body.
     TestFunction run;
 }
 
@@ -47,12 +50,18 @@ int runAllTests(RunnerContext runner)
     int failures;
     foreach (test; allTests)
     {
+        // Tests may fail with `enforce` (Exception) or `assert` (AssertError).
         try
         {
             test.run();
             writefln("[%s] PASS  %s", runner.name, test.name);
         }
-        catch (Throwable e)
+        catch (AssertError e)
+        {
+            failures++;
+            stderr.writefln("[%s] FAIL  %s: %s", runner.name, test.name, e.msg);
+        }
+        catch (Exception e)
         {
             failures++;
             stderr.writefln("[%s] FAIL  %s: %s", runner.name, test.name, e.msg);

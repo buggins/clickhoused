@@ -21,7 +21,8 @@
 dub.selections.json
 docs.json
 __dummy.html
-docs/
+# Generated API docs (dub build -b docs). Hand-written docs go to doc/.
+/docs/
 
 # Code coverage
 *.lst

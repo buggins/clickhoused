@@ -11,14 +11,18 @@ static assert(clickhousedHasVibe, "clickhoused must be built with vibe-core supp
 int main()
 {
     int failures;
-    runTask(() nothrow {
+
+    void runTests() nothrow
+    {
         scope (exit)
             exitEventLoop();
         try
             failures = runAllTests(RunnerContext("vibe", true));
         catch (Exception e)
             failures = 1;
-    });
+    }
+
+    runTask(&runTests);
     runEventLoop();
     return failures == 0 ? 0 : 1;
 }
