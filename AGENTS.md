@@ -92,6 +92,18 @@ CLICKHOUSE_HOST=localhost:9000 dub run ...    # server address for integration t
   - `source/ddbc/common.d` (DriverFactory, pool);
   - `source/ddbc/drivers/mysqlddbc.d` (the closest model).
   - Known hazard there: the per-connection `core.sync.mutex.Mutex` is recursive and owned by a thread, so it does not protect against two vibe fibers on one thread. The ClickHouse driver must use the lock that clickhoused provides for the active I/O mode.
+- `../hibernated`: the author's Hibernate-like ORM built on ddbc. A ClickHouse dialect is planned after the ddbc driver (milestone M7). Key files:
+  - `source/hibernated/dialect.d` (the abstract `Dialect`);
+  - `source/hibernated/dialects/*.d` (MySQL, PostgreSQL, SQLite);
+  - `source/hibernated/metadata.d` (`getCreateTableSQL` hardcodes `CREATE TABLE` without a dialect hook);
+  - `source/hibernated/session.d` (`beginTransaction` calls `setAutoCommit(false)`).
+  - ClickHouse facts that shape the dialect (checked on 26.2):
+    - CREATE TABLE needs `ENGINE = MergeTree ORDER BY ...`;
+    - `UPDATE` works only with `SETTINGS enable_block_number_column=1, enable_block_offset_column=1`;
+    - `DELETE FROM` works on MergeTree;
+    - transactions return `NOT_IMPLEMENTED`;
+    - there is no auto-increment, and no foreign keys or unique indexes.
+  - Driving clickhoused needs nothing hibernated-specific; everything goes through ddbc.
 
 - `../../git/ClickHouse` (i.e. `/home/lve/git/ClickHouse`): a full clone of the ClickHouse repository. **Another agent uses it to work on ClickHouse issues.** Consult it whenever ClickHouse source is needed (protocol, serializations, compression), but follow these rules:
   - Never modify, check out, stash, clean, fetch or build anything there. The current branch and working tree belong to the other agent.
@@ -151,5 +163,6 @@ These are proposed; refine them when code lands.
   - M4: LZ4/ZSTD compression;
   - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org;
   - M6: ddbc driver;
-  - M7: TLS and production features;
-  - M8: Variant/Dynamic/JSON → 1.0.
+  - M7: hibernated dialect;
+  - M8: TLS, composite types and production features;
+  - M9: Variant/Dynamic/JSON → 1.0.
