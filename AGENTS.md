@@ -7,7 +7,7 @@ Guidance for AI coding agents working on **clickhoused**, a native D client libr
 - **What:** a pure-D client (connector) for ClickHouse over the **native TCP protocol** (port 9000; 9440 with TLS). It will be published on code.dlang.org as the dub package `clickhoused`. That name was confirmed free on 2026-10-29, and no other ClickHouse package exists on dub.
 - **Repo:** `git@github.com:buggins/clickhoused.git`, default branch `main`. The author is Vadim Lopatin (GitHub `buggins`), who also maintains ddbc.
 - **License:** BSL-1.0 (Boost), the same as Phobos, ddbc and mysql-native. This was decided on 2026-10-29. It could still change while the author is the sole contributor; see "Licensing rules" below.
-- **Status:** 0.1.0 released on 2026-10-29 (tag `v0.1.0`), listed on code.dlang.org (https://code.dlang.org/packages/clickhoused), docs on https://clickhoused.dpldocs.info/. 0.2.0 (TLS) prepared on 2026-10-31.
+- **Status:** 0.1.0 released on 2026-10-29 (tag `v0.1.0`), listed on code.dlang.org (https://code.dlang.org/packages/clickhoused), docs on https://clickhoused.dpldocs.info/. 0.2.0 (TLS) released on 2026-10-31; 0.3.0 (composite and extended types, #1–#7) prepared on 2026-10-31.
   - New releases: update the version constants in `source/clickhoused/package.d` and `CHANGELOG.md`, then push a `vX.Y.Z` tag (the registry picks it up). Tag and publish only when the user asks.
 - **`PLAN.md` (local and optional):** the detailed design plan is kept as a local, untracked file. It is excluded through `.git/info/exclude` and is not part of the repository, so it may be missing in your checkout.
   - If it is present, read it before making design-level changes and keep it up to date when a design decision changes. Never `git add` it.
@@ -315,5 +315,5 @@ These are proposed; refine them when code lands.
   - M5: high-level API, vibe backend and pool → **0.1.0** on code.dlang.org (done, released);
   - M6: ddbc driver (done, in ddbc 0.8.0);
   - M7: hibernated dialect (hibernated PR #99);
-  - M8: TLS (done, 0.2.0), composite types and production features;
+  - M8: TLS (done, 0.2.0), composite and extended types (#1–#7 done, 0.3.0; #8 open) and production features;
   - M9: Variant/Dynamic/JSON → 1.0.
