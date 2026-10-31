@@ -91,6 +91,11 @@ final class UUIDColumn : Column
             data.length = length;
     }
 
+    override void appendFrom(const Column source, size_t row) @safe
+    {
+        data ~= sameKind!UUIDColumn(source).data[row];
+    }
+
     override void appendUUID(UUID value) @safe
     {
         data ~= value;
@@ -392,6 +397,23 @@ final class NullableColumn : Column
         nested.truncate(length);
     }
 
+    override void appendFrom(const Column source, size_t row) @safe
+    {
+        auto other = sameKind!NullableColumn(source);
+        nested.appendFrom(other.nested, row);
+        nulls ~= other.nulls[row];
+    }
+
+    override void readStatePrefix(BufferedReader reader) @safe
+    {
+        nested.readStatePrefix(reader);
+    }
+
+    override void writeStatePrefix(BufferedWriter writer) const @safe
+    {
+        nested.writeStatePrefix(writer);
+    }
+
     override void appendNull() @safe
     {
         nested.appendDefault();
@@ -536,6 +558,12 @@ final class NothingColumn : Column
     {
         if (length < rows)
             rows = length;
+    }
+
+    override void appendFrom(const Column source, size_t row) @safe
+    {
+        sameKind!NothingColumn(source);
+        rows++;
     }
 
     override void appendNull() @safe

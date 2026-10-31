@@ -170,7 +170,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 | `Enum8`, `Enum16` | `Enum8Column`, `Enum16Column` | label `string`, or a D `enum` |
 | `Nullable(T)` | `NullableColumn` | `Nullable!T` |
 | `Array(T)`, nested too | `ArrayColumn` | `T[]` (e.g. `long[]`, `string[][]`, `Nullable!int[]`) |
-| `LowCardinality(T)` | received as `T` | |
+| `LowCardinality(T)`, also in arrays | `LowCardinalityColumn`; `block.column!StringColumn(...)` etc. return its decoded values | as for `T` |
 
 ## Limitations
 

@@ -426,7 +426,6 @@ final class Connection
         import std.conv : to;
 
         string[string] all;
-        all["low_cardinality_allow_in_native_format"] = "0"; // LowCardinality is not supported yet
         if (options.compression == Compression.lz4)
             all["network_compression_method"] = "LZ4";
         else if (options.compression == Compression.zstd)

@@ -72,6 +72,7 @@ source/clickhoused/        library:
   protocol/                codes.d (packet codes, Revision constants), packets.d (Hello, Query, Exception, Progress, ...),
                            testserver.d (ScriptedServer: scripted mock server for unit tests, unittest builds only)
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn), array.d (ArrayColumn),
+                           lowcardinality.d (LowCardinalityColumn),
                            numeric.d, string.d, datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
                            parser.d (type-name parser), package.d (imports all)
   compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
@@ -258,8 +259,8 @@ The first implementation supports **basic types only**:
 - `UUID`, `Enum8`/`Enum16`;
 - `Nullable(T)` of the types above.
 
-`Array(T)` is supported too (#1). Everything else comes later (tracking issue #10):
-- Tuple, Map, LowCardinality;
+`Array(T)` (#1) and `LowCardinality(T)` (#2) are supported too. Everything else comes later (tracking issue #10):
+- Tuple, Map;
 - Decimal, Int/UInt128/256, IPv4/IPv6;
 - Geo types, Variant/Dynamic/JSON.
 
@@ -277,7 +278,11 @@ Column conventions:
   - Conversions are range-checked, and a failed append must leave the column unchanged.
   - `appendString` for DateTime types parses the text in the column timezone.
 
-Until LowCardinality is implemented, the client sends the setting `low_cardinality_allow_in_native_format=0`. With it, the server converts `LowCardinality(T)` columns to plain `T`, so those tables stay readable.
+LowCardinality (#2) is decoded natively; the client no longer sends `low_cardinality_allow_in_native_format=0`.
+- Wire format (checked against server bytes): a per-column **state prefix** (`UInt64` key version 1) comes before the data, and before the offsets of an enclosing Array; `Column.readStatePrefix`/`writeStatePrefix` pass through Array and Nullable (later Tuple and Map). A block without rows has no column data at all, so no prefix either.
+- Data: per part, a `UInt64` index type (width in the low byte, plus `HasAdditionalKeys` 1<<9 and `NeedUpdateDictionary` 1<<10; the global-dictionary bit 1<<8 is invalid in the native format), the keys (count + column of the inner non-Nullable type), the row count, and the indexes. For `LowCardinality(Nullable(T))` index 0 is NULL. A column's data may come in several parts.
+- `LowCardinalityColumn.values` is a plain column of the inner type; `Block.column!C` falls through to it. Writing builds a dictionary in order of first appearance; ClickHouse writes nothing for a column with no values (elements of empty arrays).
+- The server rejects LowCardinality of numbers and dates unless `allow_suspicious_low_cardinality_types=1` (the integration tests set it).
 
 ## Conventions
 

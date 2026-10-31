@@ -9,6 +9,7 @@ module clickhoused.types.string;
 import std.conv : ConvException, to;
 import std.variant : Variant;
 
+import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
 import clickhoused.types.column;
 
@@ -93,6 +94,11 @@ final class StringColumn : Column
     {
         if (length < data.length)
             data.length = length;
+    }
+
+    override void appendFrom(const Column source, size_t row) @safe
+    {
+        data ~= sameKind!StringColumn(source).data[row];
     }
 
     override void appendString(string value) @safe
@@ -222,6 +228,14 @@ final class FixedStringColumn : Column
     {
         if (length < this.length)
             bytes.length = length * width;
+    }
+
+    override void appendFrom(const Column source, size_t row) @safe
+    {
+        auto other = sameKind!FixedStringColumn(source);
+        if (other.width != width)
+            throw new ClientException("Column '" ~ name ~ "': cannot copy values of a different FixedString width");
+        bytes ~= other[row];
     }
 
     /// Appends `value` padded with zero bytes. Values longer than `width` are rejected.

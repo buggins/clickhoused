@@ -66,6 +66,20 @@ abstract class Column
     /// Writes all values in the native format.
     abstract void writeData(BufferedWriter writer) const @safe;
 
+    /++
+    Reads the serialization state prefix that precedes the data of a column
+    in a block with rows. Only some types have one (LowCardinality); columns
+    that contain other columns pass the call on. Does nothing by default.
+    +/
+    void readStatePrefix(BufferedReader) @safe
+    {
+    }
+
+    /// Writes the serialization state prefix; see `readStatePrefix`.
+    void writeStatePrefix(BufferedWriter) const @safe
+    {
+    }
+
     /// Whether the column can contain NULLs (its type is `Nullable(...)`).
     @property bool isNullable() const @safe pure nothrow
     {
@@ -225,6 +239,28 @@ abstract class Column
         throw appendError("UUID", value);
     }
 
+    /++
+    Appends the value in `row` of `source`, a column of the same class and
+    type parameters (e.g. a dictionary column of the same type).
+
+    Throws: `ClientException` if `source` is a different kind of column.
+    +/
+    void appendFrom(const Column source, size_t) @safe
+    {
+        throw new ClientException("Column '" ~ name ~ "' (" ~ typeName ~ ") cannot copy values from column '"
+                ~ source.name ~ "' (" ~ source.typeName ~ ")");
+    }
+
+    /// `source` as this column's class, for `appendFrom`.
+    protected const(C) sameKind(C : Column)(const Column source) const @safe
+    {
+        auto c = cast(const C) source;
+        if (c is null || source.classinfo !is this.classinfo)
+            throw new ClientException("Column '" ~ name ~ "' (" ~ typeName ~ ") cannot copy values from column '"
+                    ~ source.name ~ "' (" ~ source.typeName ~ ")");
+        return c;
+    }
+
     /// Creates the exception thrown when `value` of type `kind` cannot be stored in this column.
     protected ClientException appendError(T)(string kind, T value) const @safe
     {
@@ -287,6 +323,11 @@ abstract class FixedColumn(T) : Column if (isFixedWireType!T)
     {
         if (length < data.length)
             data.length = length;
+    }
+
+    override void appendFrom(const Column source, size_t row) @safe
+    {
+        data ~= sameKind!(FixedColumn!T)(source).data[row];
     }
 }
 

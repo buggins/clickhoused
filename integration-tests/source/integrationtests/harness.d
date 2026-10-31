@@ -17,6 +17,7 @@ import integrationtests.basic;
 import integrationtests.compression;
 import integrationtests.concurrency;
 import integrationtests.insert;
+import integrationtests.lowcardinality;
 import integrationtests.mapping;
 import integrationtests.pool;
 import integrationtests.server : serverConfigured, tlsConfigured;
@@ -51,7 +52,7 @@ immutable TestCase[] allTests = [
     TestCase("server error keeps connection", &testServerError, true),
     TestCase("unsupported type closes connection", &testUnsupportedType, true),
     TestCase("busy connection", &testBusyConnection, true),
-    TestCase("LowCardinality arrives as plain type", &testLowCardinality, true),
+    TestCase("LowCardinality as plain type", &testLowCardinality, true),
     TestCase("settings and parameters", &testSettingsAndParameters, true),
     TestCase("date and time types", &testDateTimeTypes, true),
     TestCase("UUID", &testUUID, true),
@@ -79,6 +80,9 @@ immutable TestCase[] allTests = [
     TestCase("Array: read every element type", &testArrayRead, true),
     TestCase("Array: many rows", &testArrayManyRows, true),
     TestCase("Array: insert and struct mapping", &testArrayInsert, true),
+    TestCase("LowCardinality: read", &testLowCardinalityRead, true),
+    TestCase("LowCardinality: many rows", &testLowCardinalityManyRows, true),
+    TestCase("LowCardinality: insert", &testLowCardinalityInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

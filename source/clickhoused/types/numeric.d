@@ -308,6 +308,11 @@ final class BoolColumn : Column
             data.length = length;
     }
 
+    override void appendFrom(const Column source, size_t row) @safe
+    {
+        data ~= sameKind!BoolColumn(source).data[row];
+    }
+
     override void appendBool(bool value) @safe
     {
         data ~= value;
