@@ -139,7 +139,8 @@ final class Inserter
     Accepted value types: integers, floating-point numbers, `bool`, strings,
     `const(ubyte)[]`, `std.datetime.Date`, `std.datetime.SysTime`, `std.uuid.UUID`,
     D enums (stored by member name), `Int128`/`UInt128`/`Int256`/`UInt256`,
-    `std.bigint.BigInt`, `Decimal`, `IPv4`, `IPv6`, `null`, `std.typecons.Nullable`, and
+    `std.bigint.BigInt`, `Decimal`, `IPv4`, `IPv6`, structs and `std.typecons.Tuple` (for
+    `Tuple` columns), `null`, `std.typecons.Nullable`, and
     dynamic arrays of these for `Array` columns (`[1, 2]`, `["a"]`, `[[1], []]`).
     Values are converted to the column types with range checks.
 
@@ -524,6 +525,28 @@ void appendValue(T)(Column column, T value) @safe
     {
         if (!appendDecimalTo(column, value))
             column.appendString(value.toString()); // other numeric columns parse the text
+    }
+    else static if (is(U == struct))
+    {
+        import clickhoused.mapping : IgnoreField, columnNames;
+        import clickhoused.types.tuple : TupleColumn;
+        import std.traits : hasUDA;
+
+        auto tuple = cast(TupleColumn) column;
+        if (tuple is null)
+            throw new ClientException("Cannot store a " ~ U.stringof ~ " in column '" ~ column.name ~ "' ("
+                    ~ column.typeName ~ "): it needs a Tuple column");
+        const positions = tuple.fieldPositions(columnNames!U, U.stringof);
+        const before = tuple.length;
+        scope (failure)
+            tuple.truncate(before); // leave the column as it was
+        size_t k;
+        static foreach (i; 0 .. U.tupleof.length)
+        {
+            static if (!hasUDA!(U.tupleof[i], IgnoreField))
+                appendValue(tuple.elements[positions[k++]], value.tupleof[i]);
+        }
+        tuple.endRow();
     }
     else
         static assert(0, "Cannot insert values of type " ~ T.stringof);

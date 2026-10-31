@@ -74,6 +74,7 @@ source/clickhoused/        library:
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn), array.d (ArrayColumn),
                            lowcardinality.d (LowCardinalityColumn), wideint.d (Int128…UInt256, WideIntColumn),
                            decimal.d (Decimal, DecimalColumn), ip.d (IPv4, IPv6 and their columns),
+                           tuple.d (TupleColumn), textlist.d (parsing [..]/(..) text for appendString),
                            numeric.d, string.d, datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
                            parser.d (type-name parser), package.d (imports all)
   compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
@@ -260,8 +261,8 @@ The first implementation supports **basic types only**:
 - `UUID`, `Enum8`/`Enum16`;
 - `Nullable(T)` of the types above.
 
-`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3) and `IPv4`/`IPv6` (#5) are supported too. Everything else comes later (tracking issue #10):
-- Tuple, Map;
+`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5) and `Tuple` (#6) are supported too. Everything else comes later (tracking issue #10):
+- Map;
 - Geo types, Variant/Dynamic/JSON.
 
 These types are implemented (milestone M2). An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
@@ -277,6 +278,8 @@ Column conventions:
 - Every column also implements the appenders that mirror the getters: `appendLong`, `appendUlong`, `appendDouble`, `appendBool`, `appendString` (parses non-string types), `appendBytes`, `appendDate`, `appendSysTime`, `appendUUID`, `appendNull` (Nullable only), `appendDefault`, and `truncate`.
   - Conversions are range-checked, and a failed append must leave the column unchanged.
   - `appendString` for DateTime types parses the text in the column timezone.
+
+Tuple (#6): elements are serialized column after column; state prefixes pass through in element order. Text is `(1,'a')`, with elements quoted as inside arrays; named tuples print the same. The native protocol sends named tuple types on one line, but 26.x `toTypeName` prints them over several lines; the type parser accepts both. Struct mapping uses `TupleColumn.fieldPositions`: by name if the tuple is named and has every field, else by position.
 
 IP addresses (#5): `IPv4` is a `UInt32` (1.2.3.4 = 0x01020304), `IPv6` 16 bytes in network order; both are quoted inside arrays. IPv6 text follows the BSD `inet_ntop` rules as in ClickHouse's `formatIPv6`: the longest run (first on ties, at least 2) of zero groups becomes `::`, lowercase hex, and a dotted tail when the run starts at 0 and has length 6 (`::1.2.3.4`) or 5 followed by `ffff` (`::ffff:1.2.3.4`). IPv4 text for an IPv6 value gives the mapped address.
 

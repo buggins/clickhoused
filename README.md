@@ -15,7 +15,7 @@ A native [ClickHouse](https://clickhouse.com) client library for the [D programm
 
 Supports ClickHouse 23.8 and newer, and D compilers with frontend 2.097 or newer (DMD 2.097+, LDC 1.27+, GDC 12+).
 
-> **Status: early release (0.x).** The API may still change before 1.0. Tuple and Map are not supported yet; see [Limitations](#limitations) and the [tracking issue](https://github.com/buggins/clickhoused/issues/10).
+> **Status: early release (0.x).** The API may still change before 1.0. Map is not supported yet; see [Limitations](#limitations) and the [tracking issue](https://github.com/buggins/clickhoused/issues/10).
 
 ## Installation
 
@@ -173,12 +173,13 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 | `Enum8`, `Enum16` | `Enum8Column`, `Enum16Column` | label `string`, or a D `enum` |
 | `Nullable(T)` | `NullableColumn` | `Nullable!T` |
 | `Array(T)`, nested too | `ArrayColumn` | `T[]` (e.g. `long[]`, `string[][]`, `Nullable!int[]`) |
+| `Tuple(T1, ...)`, named too | `TupleColumn` | a struct or `std.typecons.Tuple` (by element name if named, else by position) |
 | `LowCardinality(T)`, also in arrays | `LowCardinalityColumn`; `block.column!StringColumn(...)` etc. return its decoded values | as for `T` |
 
 ## Limitations
 
 - TLS needs the system's OpenSSL; on macOS that is Homebrew's (the built-in LibreSSL is not used).
-- Not supported yet: `Tuple`, `Map`, geo types, `Variant`/`Dynamic`/`JSON`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
+- Not supported yet: `Map`, geo types, `Variant`/`Dynamic`/`JSON`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
 - On Windows, timezone names fall back to UTC (no system timezone database). The point in time stays correct.
 
 ## Building and testing
