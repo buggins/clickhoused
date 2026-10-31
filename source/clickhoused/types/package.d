@@ -22,6 +22,7 @@ public import clickhoused.types.decimal;
 public import clickhoused.types.factory;
 public import clickhoused.types.ip;
 public import clickhoused.types.lowcardinality;
+public import clickhoused.types.map;
 public import clickhoused.types.misc;
 public import clickhoused.types.numeric;
 public import clickhoused.types.parser;

@@ -34,7 +34,8 @@ import std.bigint : BigInt;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
 import std.meta : AliasSeq;
-import std.traits : getUDAs, hasUDA, isDynamicArray, isFloatingPoint, isIntegral, isSigned, isSomeString, Unqual;
+import std.traits : getUDAs, hasUDA, isAssociativeArray, isDynamicArray, isFloatingPoint, isIntegral, isSigned,
+    isSomeString, KeyType, Unqual, ValueType;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
@@ -98,7 +99,8 @@ template columnNames(T) if (is(T == struct))
 Whether values of type `T` can be read from and written to columns: numbers,
 `Int128`, `UInt128`, `Int256`, `UInt256`, `std.bigint.BigInt` (any integer
 column), `Decimal` (any numeric column), `IPv4`, `IPv6`, structs and
-`std.typecons.Tuple` (for `Tuple` columns, see `isTupleValue`), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
+`std.typecons.Tuple` (for `Tuple` columns, see `isTupleValue`), associative
+arrays `V[K]` (for `Map` columns), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
 `std.typecons.Nullable` of these, and dynamic arrays of mappable values
 (for `Array` columns; `ubyte[]` stays the type for `String` bytes).
 +/
@@ -109,6 +111,8 @@ template isMappableValue(T)
         enum isMappableValue = isMappableValue!V;
     else static if (isMappedArray!U)
         enum isMappableValue = isMappableValue!(typeof(U.init[0]));
+    else static if (isAssociativeArray!U)
+        enum isMappableValue = isMappableValue!(KeyType!U) && isMappableValue!(ValueType!U);
     else static if (isTupleValue!U)
         enum isMappableValue = true;
     else
@@ -170,7 +174,12 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
         {
             import clickhoused.types.array : ArrayColumn;
 
+            import clickhoused.types.map : MapColumn;
+
             auto array = cast(ArrayColumn) column;
+            if (array is null)
+                if (auto map = cast(MapColumn) column)
+                    array = map.entries; // a Map is an array of (key, value) tuples
             if (array is null)
                 throw new ClientException("Column '" ~ column.name ~ "' (" ~ column.typeName
                         ~ ") is not an Array column, which " ~ U.stringof ~ " needs");
@@ -179,6 +188,19 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
             foreach (i; array.rowStart(row) .. array.rowEnd(row))
                 values ~= readValue!(typeof(U.init[0]))(array.elements, i);
             return values;
+        }
+        else static if (isAssociativeArray!U)
+        {
+            import clickhoused.types.map : MapColumn;
+
+            auto map = cast(MapColumn) column;
+            if (map is null)
+                throw new ClientException("Column '" ~ column.name ~ "' (" ~ column.typeName
+                        ~ ") is not a Map column, which " ~ U.stringof ~ " needs");
+            U values;
+            foreach (i; map.rowStart(row) .. map.rowEnd(row))
+                values[readValue!(KeyType!U)(map.keys, i)] = readValue!(ValueType!U)(map.values, i);
+            return values; // a key given more than once keeps its last value
         }
         else static if (is(U == enum))
         {
@@ -704,4 +726,34 @@ private string columnList(Block block) @safe
     auto text = createColumn("s", "String");
     appendValue(text, "x");
     assertThrown!ClientException(readValue!Point(text, 0));
+}
+
+// Associative arrays and arrays of (key, value) tuples to and from Map columns
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import std.typecons : Tuple, tuple;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.factory : createColumn;
+    import clickhoused.types.map : MapColumn;
+
+    auto c = createColumn("m", "Map(String, Nullable(Int64))");
+    appendValue(c, ["a": Nullable!long(1)]);
+    appendValue(c, [tuple("x", Nullable!long.init), tuple("x", Nullable!long(2))]); // ordered, duplicate key
+    appendValue(c, cast(long[string]) null);
+    assert(c.getString(0) == "{'a':1}" && c.getString(1) == "{'x':NULL,'x':2}" && c.getString(2) == "{}");
+    assert(readValue!(Nullable!long[string])(c, 0)["a"].get == 1);
+    assert(readValue!(Nullable!long[string])(c, 1)["x"].get == 2); // the last value of a repeated key
+    assert(readValue!(Tuple!(string, Nullable!long)[])(c, 1).length == 2);
+    assert(readValue!string(c, 0) == "{'a':1}");
+    assertThrown!ClientException(appendValue(c, ["b": "not a number"]));
+    assert(c.length == 3 && (cast(MapColumn) c).keys.length == 3); // the failed row left no trace
+
+    auto nested = createColumn("n", "Map(UInt8, Map(String, Array(UInt8)))");
+    appendValue(nested, [ubyte(1): ["k": [ubyte(2), 3]]]);
+    assert(nested.getString(0) == "{1:{'k':[2,3]}}");
+    assert(readValue!(ubyte[][string][ubyte])(nested, 0)[1]["k"] == [2, 3]);
+    auto text = createColumn("s", "String");
+    appendValue(text, "x");
+    assertThrown!ClientException(readValue!(long[string])(text, 0));
 }

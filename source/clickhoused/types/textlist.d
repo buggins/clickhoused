@@ -49,6 +49,18 @@ package TextElement[] parseTextList(string text, char open, char close, const Co
     return parser.parse(open, close);
 }
 
+/++
+Parses `text` as a map in ClickHouse's text form: `{key: value, ...}`.
+
+Throws: `ClientException` (with a message naming `target`) if the text is
+not such a map.
++/
+package TextElement[2][] parseTextPairs(string text, const Column target) @safe
+{
+    auto parser = Parser(text, target, "a map");
+    return parser.parsePairs();
+}
+
 private struct Parser
 {
     string text;
@@ -68,7 +80,7 @@ private struct Parser
         {
             for (;;)
             {
-                elements ~= element(close);
+                elements ~= element([',', close]);
                 skipSpaces();
                 const c = next();
                 if (c == close)
@@ -83,7 +95,8 @@ private struct Parser
         return elements;
     }
 
-    private TextElement element(char close) @safe
+    /// One element; a bare token ends at any of `stops`.
+    private TextElement element(scope const char[] stops) @safe
     {
         skipSpaces();
         const c = peek();
@@ -92,7 +105,7 @@ private struct Parser
         if (c == '[' || c == '(' || c == '{')
             return TextElement(TextElement.Kind.composite, nested());
         const start = pos;
-        while (pos < text.length && text[pos] != ',' && text[pos] != close)
+        while (pos < text.length && !isStop(text[pos], stops))
             pos++;
         auto token = text[start .. pos];
         while (token.length && (token[$ - 1] == ' ' || token[$ - 1] == '\t' || token[$ - 1] == '\n'))
@@ -100,6 +113,46 @@ private struct Parser
         if (token.length == 0)
             throw error();
         return TextElement(token == "NULL" ? TextElement.Kind.null_ : TextElement.Kind.bare, token);
+    }
+
+    /// Parses `{key: value, ...}`.
+    TextElement[2][] parsePairs() @safe
+    {
+        TextElement[2][] pairs;
+        skipSpaces();
+        expect('{');
+        skipSpaces();
+        if (peek() == '}')
+            pos++;
+        else
+        {
+            for (;;)
+            {
+                const key = element([':']);
+                skipSpaces();
+                expect(':');
+                const value = element([',', '}']);
+                pairs ~= [key, value];
+                skipSpaces();
+                const c = next();
+                if (c == '}')
+                    break;
+                if (c != ',')
+                    throw error();
+            }
+        }
+        skipSpaces();
+        if (pos != text.length)
+            throw error();
+        return pairs;
+    }
+
+    private static bool isStop(char c, scope const char[] stops) @safe pure nothrow @nogc
+    {
+        foreach (s; stops)
+            if (c == s)
+                return true;
+        return false;
     }
 
     /// A quoted string at the current position, unescaped.
@@ -241,4 +294,24 @@ private struct Parser
     assert(parseTextList("[]", '[', ']', target, "an array").length == 0);
     foreach (bad; ["", "(", "(1,", "(1)x", "1", "(,)", "('a", "[1]"])
         assertThrown!ClientException(parseTextList(bad, '(', ')', target, "a tuple"), bad);
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.types.string : StringColumn;
+
+    auto target = new StringColumn("c");
+    alias K = TextElement.Kind;
+    const pairs = parseTextPairs(` { 'a' : 1, 2:'it''s', 'n':NULL, 'x':[1, 2], 'm':{'k':(1, 2)} } `, target);
+    assert(pairs.length == 5);
+    assert(pairs[0] == [TextElement(K.quoted, "a"), TextElement(K.bare, "1")]);
+    assert(pairs[1] == [TextElement(K.bare, "2"), TextElement(K.quoted, "it's")]);
+    assert(pairs[2][1].kind == K.null_ && pairs[3][1] == TextElement(K.composite, "[1, 2]"));
+    assert(pairs[4][1] == TextElement(K.composite, "{'k':(1, 2)}"));
+    assert(parseTextPairs("{}", target).length == 0);
+    foreach (bad; [
+        "", "{", "{'a'}", "{'a':}", "{:1}", "{'a':1,}", "{'a':1} x", "['a':1]", "{'a' 1}"
+    ])
+        assertThrown!ClientException(parseTextPairs(bad, target), bad);
 }

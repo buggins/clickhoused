@@ -146,9 +146,9 @@ void testUnsupportedType()
     auto conn = connectToServer();
     scope (exit)
         conn.close();
-    auto e = collectException!ClientException(conn.exec("SELECT map('a', 1) AS m"));
+    auto e = collectException!ClientException(conn.exec("SELECT INTERVAL 1 DAY AS i"));
     enforce(e !is null, "no exception");
-    enforce(e.msg.canFind("Map(String, UInt8)"), "type name missing from message: " ~ e.msg);
+    enforce(e.msg.canFind("IntervalDay"), "type name missing from message: " ~ e.msg);
     enforce(!conn.isOpen, "connection should be closed");
     assertThrown!ClientException(conn.ping());
 }

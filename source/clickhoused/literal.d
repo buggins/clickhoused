@@ -13,7 +13,7 @@ module clickhoused.literal;
 import std.bigint : BigInt, toDecimalString;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
-import std.traits : isArray, isFloatingPoint, isIntegral, isSomeString, Unqual;
+import std.traits : isArray, isAssociativeArray, isFloatingPoint, isIntegral, isSomeString, Unqual;
 import std.typecons : isTuple, Nullable;
 import std.uuid : UUID;
 
@@ -33,7 +33,7 @@ $(UL
         `std.bigint.BigInt` as `toInt256('…')`: ClickHouse would read a plain literal
         beyond 64 bits as `Float64`;)
     $(LI `Decimal` as `toDecimal256('…', scale)`, exact; `IPv4`/`IPv6` as `toIPv4('…')`/`toIPv6('…')`;)
-    $(LI `std.typecons.Tuple` as `tuple(…)`;)
+    $(LI `std.typecons.Tuple` as `tuple(…)`; associative arrays as `map(key, value, …)`;)
     $(LI `null` and empty `Nullable` as `NULL`; other arrays as `[…]`.)
 )
 +/
@@ -88,6 +88,17 @@ string formatLiteral(T)(auto ref const T value) @safe
         return "to" ~ U.typeName ~ "('" ~ value.toString() ~ "')";
     else static if (is(U == BigInt))
         return "toInt256('" ~ value.toDecimalString() ~ "')";
+    else static if (isAssociativeArray!U)
+    {
+        string s = "map(";
+        bool first = true;
+        foreach (key, ref item; value)
+        {
+            s ~= (first ? "" : ", ") ~ formatLiteral(key) ~ ", " ~ formatLiteral(item);
+            first = false;
+        }
+        return s ~ ")";
+    }
     else static if (isTuple!U)
     {
         string s = "tuple(";
@@ -147,6 +158,7 @@ string formatLiteral(T)(auto ref const T value) @safe
     assert(formatLiteral(Decimal.fromString("-1.50")) == "toDecimal256('-1.50', 2)");
     assert(formatLiteral(IPv6.fromString("::1")) == "toIPv6('::1')" && formatLiteral(IPv4(1)) == "toIPv4('0.0.0.1')");
     assert(formatLiteral(tuple(1, "a", [2])) == "tuple(1, 'a', [2])");
+    assert(formatLiteral(["k": 1]) == "map('k', 1)" && formatLiteral(cast(int[string]) null) == "map()");
     assert(formatLiteral(BigInt("-12345678901234567890123")) == "toInt256('-12345678901234567890123')");
     assert(formatLiteral(SysTime(DateTime(2025, 10, 29, 12, 34, 56), UTC()) + 789.msecs)
             == "toDateTime64('2025-10-29 12:34:56.7890000', 7, 'UTC')");

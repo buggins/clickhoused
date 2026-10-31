@@ -23,7 +23,7 @@ module clickhoused.insert;
 import std.bigint : BigInt, toDecimalString;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
-import std.traits : isDynamicArray, isFloatingPoint, isIntegral, isSigned, isSomeString;
+import std.traits : isAssociativeArray, isDynamicArray, isFloatingPoint, isIntegral, isSigned, isSomeString;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
@@ -140,7 +140,7 @@ final class Inserter
     `const(ubyte)[]`, `std.datetime.Date`, `std.datetime.SysTime`, `std.uuid.UUID`,
     D enums (stored by member name), `Int128`/`UInt128`/`Int256`/`UInt256`,
     `std.bigint.BigInt`, `Decimal`, `IPv4`, `IPv6`, structs and `std.typecons.Tuple` (for
-    `Tuple` columns), `null`, `std.typecons.Nullable`, and
+    `Tuple` columns), associative arrays (for `Map` columns), `null`, `std.typecons.Nullable`, and
     dynamic arrays of these for `Array` columns (`[1, 2]`, `["a"]`, `[[1], []]`).
     Values are converted to the column types with range checks.
 
@@ -481,7 +481,12 @@ void appendValue(T)(Column column, T value) @safe
     {
         import clickhoused.types.array : ArrayColumn;
 
+        import clickhoused.types.map : MapColumn;
+
         auto array = cast(ArrayColumn) column;
+        if (array is null)
+            if (auto map = cast(MapColumn) column)
+                array = map.entries; // an array of (key, value) tuples fills a Map
         if (array is null)
             throw new ClientException("Cannot store an array in column '" ~ column.name ~ "' (" ~ column.typeName
                     ~ ")");
@@ -526,6 +531,27 @@ void appendValue(T)(Column column, T value) @safe
         if (!appendDecimalTo(column, value))
             column.appendString(value.toString()); // other numeric columns parse the text
     }
+    else static if (isAssociativeArray!U)
+    {
+        import clickhoused.types.map : MapColumn;
+
+        auto map = cast(MapColumn) column;
+        if (map is null)
+            throw new ClientException("Cannot store an associative array in column '" ~ column.name ~ "' ("
+                    ~ column.typeName ~ "): it needs a Map column");
+        const before = map.keys.length;
+        scope (failure)
+        {
+            map.keys.truncate(before); // leave the column as it was
+            map.values.truncate(before);
+        }
+        foreach (key, item; value)
+        {
+            appendValue(map.keys, key);
+            appendValue(map.values, item);
+        }
+        map.endRow();
+    }
     else static if (is(U == struct))
     {
         import clickhoused.mapping : IgnoreField, columnNames;
@@ -558,6 +584,8 @@ private size_t estimateSize(T)(T value) @safe pure nothrow
         return 1;
     else static if (is(T : const(char)[]) || is(T : const(ubyte)[]))
         return value.length + 8;
+    else static if (isAssociativeArray!T)
+        return 8 + value.length * 16; // a rough estimate: iterating an associative array is not nothrow
     else static if (isDynamicArray!T)
     {
         size_t size = 8;

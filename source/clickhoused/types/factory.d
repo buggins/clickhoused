@@ -13,6 +13,7 @@ import clickhoused.types.datetime;
 import clickhoused.types.decimal;
 import clickhoused.types.ip : IPv4, IPv4Column, IPv6, IPv6Column;
 import clickhoused.types.lowcardinality : LowCardinalityColumn;
+import clickhoused.types.map : MapColumn;
 import clickhoused.types.misc;
 import clickhoused.types.numeric;
 import clickhoused.types.parser : TypeArgKind, TypeNode, parseType;
@@ -187,7 +188,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             throw invalid();
         const nestedType = type.args[0].type;
         if (nestedType.name == "Nullable" || nestedType.name == "Array" || nestedType.name == "LowCardinality"
-                || nestedType.name == "Tuple")
+                || nestedType.name == "Tuple" || nestedType.name == "Map")
             throw invalid();
         auto nested = createColumn(name, nestedType.toString(), nestedType, defaultTimezone);
         return new NullableColumn(name, typeName, nested);
@@ -201,7 +202,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         if (type.args.length != 1 || type.args[0].kind != TypeArgKind.type)
             throw invalid();
         const innerType = type.args[0].type;
-        if (innerType.name == "LowCardinality" || innerType.name == "Array" || innerType.name == "Tuple")
+        if (innerType.name == "LowCardinality" || innerType.name == "Array" || innerType.name == "Tuple"
+                || innerType.name == "Map")
             throw invalid();
         // The dictionary holds the inner type without Nullable: NULL is index 0
         const keyType = innerType.name == "Nullable" ? innerType.args[0].type : innerType;
@@ -227,6 +229,12 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             elements ~= createColumn(name, arg.type.toString(), arg.type, defaultTimezone);
         }
         return new TupleColumn(name, typeName, elements, names);
+    case "Map":
+        if (type.args.length != 2 || type.args[0].kind != TypeArgKind.type || type.args[1].kind != TypeArgKind.type)
+            throw invalid();
+        auto keys = createColumn(name, type.args[0].type.toString(), type.args[0].type, defaultTimezone);
+        auto mapValues = createColumn(name, type.args[1].type.toString(), type.args[1].type, defaultTimezone);
+        return new MapColumn(name, typeName, keys, mapValues);
     case "Nothing":
         return new NothingColumn(name, typeName);
     default:
@@ -248,8 +256,11 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     assert(cast(NothingColumn)(cast(NullableColumn) createColumn("n", "Nullable(Nothing)")).nested !is null);
 
     assert(cast(UInt8Column)(cast(ArrayColumn) createColumn("a", "Array(UInt8)")).elements !is null);
-    assertThrown!ClientException(createColumn("x", "Map(String, UInt8)"));
-    assertThrown!ClientException(createColumn("x", "Array(Map(String, UInt8))"));
+    assert(cast(MapColumn) createColumn("m", "Map(String, Array(UInt8))") !is null);
+    assertThrown!ClientException(createColumn("x", "Variant(String, UInt8)"));
+    assertThrown!ClientException(createColumn("x", "Array(JSON)"));
+    assertThrown!ProtocolException(createColumn("x", "Map(String)"));
+    assertThrown!ProtocolException(createColumn("x", "Nullable(Map(String, UInt8))"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(Array(UInt8))"));
     assertThrown!ProtocolException(createColumn("x", "Array(UInt8, UInt8)"));
     assert(cast(StringColumn)(cast(LowCardinalityColumn) createColumn("l", "LowCardinality(String)")).values !is null);
@@ -290,6 +301,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Nullable(Decimal(20, 3))", "IPv4", "IPv6", "Array(Nullable(IPv6))",
         "Tuple(Int64, String)", "Tuple(a Array(Date), b Nullable(String))",
         "Array(Tuple(LowCardinality(String), UInt8))",
+        "Map(String, Int64)", "Map(LowCardinality(String), Array(Nullable(String)))",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -331,6 +343,12 @@ version (unittest)
         {
             fill(n.nested);
             n.nulls = [false, true];
+        }
+        else if (auto map = cast(MapColumn) c)
+        {
+            fill(map.keys); // two entries: an empty map and a map with both
+            fill(map.values);
+            map.entries.offsets = [0, 2];
         }
         else if (auto tuple = cast(TupleColumn) c)
         {
