@@ -946,15 +946,25 @@ unittest
         return;
     auto pair = connectPair(trustingOptions());
     assert(pair.clientError is null && pair.serverError is null);
+    // Consume the session tickets first: closing a socket with unread data makes
+    // Windows reset the connection, which can discard the close_notify in transit
+    Thread.sleep(100.msecs);
+    assert(!pair.client.dataAvailable());
     pair.client.close();
     assert(!pair.client.connected);
     assert(pair.server.read(new ubyte[16]) == 0);
     pair.server.close();
 
+    // Without close_notify the client sees the end of the stream, or a reset on Windows
     auto abrupt = connectPair(trustingOptions());
     assert(abrupt.clientError is null && abrupt.serverError is null);
-    abrupt.server.raw.close(); // no close_notify
-    assert(abrupt.client.read(new ubyte[16]) == 0);
+    abrupt.server.raw.close();
+    bool ended;
+    try
+        ended = abrupt.client.read(new ubyte[16]) == 0;
+    catch (ConnectionException)
+        ended = true;
+    assert(ended);
     abrupt.close();
 }
 

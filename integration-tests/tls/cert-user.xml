@@ -1,0 +1,15 @@
+<!-- A user that logs in with the test client certificate (CN=clickhoused-client). -->
+<clickhouse>
+    <users>
+        <cert_user>
+            <ssl_certificates>
+                <common_name>clickhoused-client</common_name>
+            </ssl_certificates>
+            <networks>
+                <ip>::/0</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+        </cert_user>
+    </users>
+</clickhouse>

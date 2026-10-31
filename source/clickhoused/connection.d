@@ -27,6 +27,7 @@ import clickhoused.insert : Inserter, quoteIdentifier;
 import clickhoused.mapping : RowRange;
 import clickhoused.io.backend : IoBackend, backendFor;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+import clickhoused.io.tls : TlsContext, TlsTransport;
 import clickhoused.io.transport : Transport;
 import clickhoused.protocol.codes : ClientPacket, Revision, ServerPacket;
 import clickhoused.protocol.packets;
@@ -160,10 +161,17 @@ final class Connection
         return state == State.busy;
     }
 
-    /// The server this connection is connected to (one of `ConnectionOptions.hosts`).
+    /// The server this connection is connected to (one of `ConnectionOptions.hosts`), with the port in use.
     @property HostPort host() const @safe pure nothrow
     {
         return connectedHost;
+    }
+
+    /// The negotiated TLS protocol, e.g. `"TLSv1.3"`; empty for a connection without TLS.
+    @property string tlsVersion() @safe
+    {
+        auto tls = cast(TlsTransport) transport;
+        return tls is null ? "" : tls.protocolVersion;
     }
 
     /// Name of the I/O backend in use: `"phobos"` (thread mode) or `"vibe"` (fiber mode).
@@ -507,6 +515,8 @@ final class Connection
             throw new ClientException("ZSTD compression is not compiled in: build clickhoused with the 'zstd' "
                     ~ "configuration, or use Compression.lz4");
         backend = backendFor(options.ioMode);
+        // Loads OpenSSL and the certificates once; problems here are not host-specific
+        auto tlsContext = options.secure ? TlsContext.client(options.tls) : null;
 
         // Try the hosts in turn. Network and protocol failures move on to the next
         // host; a login rejected by the server does not.
@@ -515,7 +525,7 @@ final class Connection
         {
             try
             {
-                connectTo(endpoint);
+                connectTo(endpoint, tlsContext);
                 return;
             }
             catch (ConnectionException e)
@@ -533,16 +543,21 @@ final class Connection
         auto hosts = options.hosts.length ? options.hosts.dup : [
             HostPort(options.host, options.port)
         ];
+        foreach (ref h; hosts)
+            h.port = options.effectivePort(h.port);
         if (options.hostSelection == HostSelection.random)
             randomShuffle(hosts);
         return hosts;
     }
 
-    private void connectTo(HostPort endpoint) @safe
+    private void connectTo(HostPort endpoint, TlsContext tlsContext) @safe
     {
-        transport = options.transportFactory !is null
+        auto raw = options.transportFactory !is null
             ? options.transportFactory(endpoint.host, endpoint.port, options.connectTimeout) : backend.connect(
                     endpoint.host, endpoint.port, options.connectTimeout);
+        // The TLS handshake closes the raw transport if it fails
+        transport = tlsContext is null ? raw : new TlsTransport(raw, backend, tlsContext, endpoint.host,
+                options.tls, options.connectTimeout);
         connectedHost = endpoint;
         reader = new BufferedReader(transport);
         writer = new BufferedWriter(transport);

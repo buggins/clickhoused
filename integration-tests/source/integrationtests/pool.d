@@ -20,6 +20,8 @@ string serverDsn(string extra = null)
     auto dsn = "clickhouse://" ~ encodeComponent(o.user) ~ ":" ~ encodeComponent(
             o.password) ~ "@"
         ~ HostPort(o.host, o.port).toString() ~ "/default?compress=" ~ o.compression.to!string;
+    if (o.secure)
+        dsn ~= "&secure=true&tls_ca_file=" ~ encodeComponent(o.tls.caFile);
     return extra.length ? dsn ~ "&" ~ extra : dsn;
 }
 
@@ -31,14 +33,15 @@ void testDsnConnect()
         conn.close();
     auto block = conn.firstBlock("SELECT toUInt64(getSetting('max_threads')) AS v");
     enforce(block.column!UInt64Column("v").data == [3], "setting from the DSN not applied");
-    enforce(conn.host.port == serverOptions().port, "connected host");
+    const o = serverOptions();
+    enforce(conn.host.port == o.effectivePort(o.port), "connected host");
 }
 
 /// The first host refuses the connection; the second one is used.
 void testFailover()
 {
     auto options = serverOptions();
-    const reachable = HostPort(options.host, options.port);
+    const reachable = HostPort(options.host, options.effectivePort(options.port));
     options.hosts = [HostPort("127.0.0.1", 1), reachable];
     options.connectTimeout = 2.seconds;
     auto conn = new Connection(options);

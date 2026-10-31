@@ -22,6 +22,8 @@ public import clickhoused.literal;
 public import clickhoused.mapping;
 public import clickhoused.pool;
 public import clickhoused.io.backend : IoMode;
+public import clickhoused.io.openssl : loadOpenSsl;
+public import clickhoused.io.tls : TlsOptions;
 public import clickhoused.io.transport : Transport, TransportFactory;
 public import clickhoused.protocol.packets : ProfileInfo, Progress, ServerInfo;
 public import clickhoused.settings;

@@ -24,3 +24,6 @@ openssl ecparam -name prime256v1 -genkey -noout -out client.key
 openssl req -new -key client.key -subj "/CN=clickhoused-client" -out client.csr
 printf 'extendedKeyUsage=clientAuth\n' > "$ext"
 openssl x509 -req -in client.csr -CA ca.pem -CAkey ca.key -CAcreateserial -sha256 -days $days -extfile "$ext" -out client.pem
+
+# The ClickHouse test container reads the server key as another user
+chmod 644 server.key client.key

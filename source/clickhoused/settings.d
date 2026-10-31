@@ -16,23 +16,30 @@ import core.time : Duration, seconds;
 import clickhoused.compress.frame : Compression;
 import clickhoused.exception : ClientException;
 import clickhoused.io.backend : IoMode;
+import clickhoused.io.tls : TlsOptions;
 import clickhoused.io.transport : TransportFactory;
+
+/// Default native protocol port without TLS.
+enum ushort defaultPort = 9000;
+/// Default native protocol port with TLS (`ConnectionOptions.secure`).
+enum ushort defaultSecurePort = 9440;
 
 /// A server address.
 struct HostPort
 {
     /// Host name or IP address.
     string host;
-    /// Native protocol port.
-    ushort port = 9000;
+    /// Native protocol port; 0 means the default (9000, or 9440 with TLS).
+    ushort port;
 
-    /// `host:port`, with IPv6 addresses in brackets.
+    /// `host:port`, with IPv6 addresses in brackets; just the host when the port is 0 (default).
     string toString() const @safe pure
     {
         import std.algorithm.searching : canFind;
         import std.conv : to;
 
-        return (host.canFind(':') ? "[" ~ host ~ "]" : host) ~ ":" ~ port.to!string;
+        const name = host.canFind(':') ? "[" ~ host ~ "]" : host;
+        return port ? name ~ ":" ~ port.to!string : name;
     }
 }
 
@@ -50,8 +57,11 @@ struct ConnectionOptions
 {
     /// Server host name or IP address. Ignored when `hosts` is set.
     string host = "localhost";
-    /// Server native protocol port (9000; 9440 is the usual TLS port). Ignored when `hosts` is set.
-    ushort port = 9000;
+    /++
+    Server native protocol port. 0 (the default) means 9000, or 9440 when
+    `secure` is set. Ignored when `hosts` is set.
+    +/
+    ushort port;
     /++
     Several servers (e.g. replicas). Connecting tries them as `hostSelection`
     says and uses the first one that answers; a host that refuses the login is
@@ -94,6 +104,19 @@ struct ConnectionOptions
     TransportFactory transportFactory;
 
     /++
+    Connect over TLS. The OpenSSL library (1.1.1 or 3.x) is loaded when the
+    first secure connection is made; see `clickhoused.io.openssl.loadOpenSsl`.
+    The server certificate and host name are verified unless
+    `tls.skipVerify` is set.
+
+    With a `transportFactory`, the transport it returns is wrapped in TLS too;
+    leave this off if the factory already returns an encrypted stream.
+    +/
+    bool secure;
+    /// TLS settings, used when `secure` is set: trusted CAs, client certificate, server name.
+    TlsOptions tls;
+
+    /++
     In fiber mode, let other tasks run after each block of a query result is
     received, so a large result does not monopolize the event loop. No effect
     in thread mode.
@@ -124,6 +147,11 @@ struct ConnectionOptions
         $(LI `io`: `auto`, `phobos` or `vibe`;)
         $(LI `host_selection`: `in_order` or `random`;)
         $(LI `client_name`, `quota_key`, `yield_between_blocks` (`true`/`false`);)
+        $(LI `secure` (or `tls`): `true`/`1` to connect over TLS; the default port becomes 9440;)
+        $(LI `skip_verify`: `true` to accept any server certificate (development only);)
+        $(LI `tls_ca_file`: PEM file of trusted CAs, instead of the system store;)
+        $(LI `tls_cert_file`, `tls_key_file`: client certificate and key (PEM), for mutual TLS;)
+        $(LI `tls_server_name`: name to send (SNI) and verify instead of the host;)
         $(LI `pool_*`: connection pool options, see `clickhoused.pool.PoolOptions.fromDsn`.)
     )
     Any other parameter is sent to the server as a setting, e.g. `max_threads=4`.
@@ -201,9 +229,18 @@ struct ConnectionOptions
         auto o = ConnectionOptions.fromDsn(
                 "clickhouse://reader:s%40cret@db1:9001,db2/analytics?compress=lz4&max_threads=4");
         assert(o.user == "reader" && o.password == "s@cret" && o.database == "analytics");
-        assert(o.hosts == [HostPort("db1", 9001), HostPort("db2", 9000)]);
+        assert(o.hosts == [HostPort("db1", 9001), HostPort("db2")]); // db2: the default port
         assert(o.compression == Compression.lz4);
         assert(o.settings["max_threads"] == "4");
+
+        auto cloud = ConnectionOptions.fromDsn("clickhouse://user:pass@abc.clickhouse.cloud?secure=true");
+        assert(cloud.secure && cloud.effectivePort(cloud.port) == 9440);
+    }
+
+    /// The port to connect to for `port`: itself, or the default when it is 0.
+    ushort effectivePort(ushort port) const @safe pure nothrow
+    {
+        return port != 0 ? port : secure ? defaultSecurePort : defaultPort;
     }
 
     /++
@@ -299,8 +336,22 @@ struct ConnectionOptions
                 break;
             case "secure":
             case "tls":
-                if (value != "false" && value != "0")
-                    throw new ClientException("TLS connections are not supported yet");
+                options.secure = parseFlag(key, value);
+                break;
+            case "skip_verify":
+                options.tls.skipVerify = parseFlag(key, value);
+                break;
+            case "tls_ca_file":
+                options.tls.caFile = value;
+                break;
+            case "tls_cert_file":
+                options.tls.certFile = value;
+                break;
+            case "tls_key_file":
+                options.tls.keyFile = value;
+                break;
+            case "tls_server_name":
+                options.tls.serverName = value;
                 break;
             default:
                 if (!key.startsWith("pool_"))
@@ -330,7 +381,16 @@ struct ConnectionOptions
 
     // Defaults and minimal strings
     auto o = ConnectionOptions.fromDsn("clickhouse://localhost");
-    assert(o.host == "localhost" && o.port == 9000 && o.user == "default" && o.database == "default");
+    assert(o.host == "localhost" && o.port == 0 && o.user == "default" && o.database == "default");
+    assert(!o.secure && o.effectivePort(o.port) == 9000 && o.effectivePort(9001) == 9001);
+
+    // TLS
+    o = ConnectionOptions.fromDsn("clickhouse://h1,h2:9441?secure=1&skip_verify=true&tls_ca_file=%2Fetc%2Fca.pem"
+            ~ "&tls_cert_file=c.pem&tls_key_file=k.pem&tls_server_name=db.example");
+    assert(o.secure && o.tls.skipVerify && o.tls.caFile == "/etc/ca.pem" && o.tls.certFile == "c.pem");
+    assert(o.tls.keyFile == "k.pem" && o.tls.serverName == "db.example" && o.settings.length == 0);
+    assert(o.effectivePort(o.hosts[0].port) == 9440 && o.effectivePort(o.hosts[1].port) == 9441);
+    assert(!ConnectionOptions.fromDsn("clickhouse://h?tls=false").secure);
 
     // IPv6, timeouts, I/O mode, flags
     o = ConnectionOptions.fromDsn("clickhouse://[::1]:9440/?connect_timeout=0.5&io=phobos&yield_between_blocks=false"
@@ -347,7 +407,8 @@ struct ConnectionOptions
     foreach (bad; [
         "http://h", "clickhouse://", "clickhouse://h:notaport", "clickhouse://h:99999",
         "clickhouse://h?compress=x",
-        "clickhouse://h?connect_timeout=-1", "clickhouse://h?io=threads", "clickhouse://h?secure=true",
+        "clickhouse://h?connect_timeout=-1", "clickhouse://h?io=threads", "clickhouse://h?secure=yes",
+        "clickhouse://h?skip_verify=2",
         "clickhouse://[::1", "clickhouse://h?x=%zz",
     ])
         assertThrown!ClientException(ConnectionOptions.fromDsn(bad), bad);
@@ -418,6 +479,22 @@ private Duration parseSeconds(string key, string value) @safe
     return dur!"hnsecs"(cast(long)(secondsValue * 10_000_000));
 }
 
+/// Parses `true`/`false`/`1`/`0`.
+private bool parseFlag(string key, string value) @safe
+{
+    switch (value)
+    {
+    case "true":
+    case "1":
+        return true;
+    case "false":
+    case "0":
+        return false;
+    default:
+        throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "' (true or false expected)");
+    }
+}
+
 private E parseEnum(E)(string key, string value) @safe
 {
     import std.conv : ConvException, to;
@@ -436,5 +513,5 @@ private E parseEnum(E)(string key, string value) @safe
     options.user = "reader";
     options.password = "secret";
     options.settings["max_execution_time"] = "60";
-    assert(options.port == 9000 && options.database == "default");
+    assert(options.effectivePort(options.port) == 9000 && options.database == "default");
 }

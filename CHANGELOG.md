@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
+## Unreleased
+
+### Added
+- **TLS** in thread and fiber mode: `ConnectionOptions.secure` and `tls` (`TlsOptions`), or `secure=true` in the connection string, with `skip_verify`, `tls_ca_file`, `tls_cert_file`, `tls_key_file` and `tls_server_name`. The server certificate and host name are verified by default (TLS 1.2 or newer); client certificates allow certificate-based login.
+- OpenSSL 1.1.1 or 3.x is loaded at run time when the first secure connection is made, so builds without TLS don't need it. `loadOpenSsl` loads it early or from specific files.
+- `Connection.tlsVersion`.
+
+### Changed
+- `ConnectionOptions.port` and `HostPort.port` default to 0, meaning 9000, or 9440 with TLS. A connection string without a port gives 0 too. `Connection.host` reports the port actually used.
+
 ## 0.1.2 — 2026-10-29
 
 ### Changed

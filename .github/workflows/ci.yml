@@ -119,6 +119,27 @@ jobs:
           dub run :example-vibe
         env:
           CLICKHOUSE_DSN: clickhouse://localhost:9000
+      # A second server of the same version with TLS on port 9440, using the test
+      # certificates (a service container can't mount files from the checkout)
+      - name: Start a server with TLS
+        run: sh integration-tests/tls/start-server.sh "${{ matrix.clickhouse }}" 19440
+      - name: Integration tests over TLS (threads)
+        run: dub run :integration-tests-phobos
+        env:
+          CLICKHOUSE_HOST: localhost:19440
+          CLICKHOUSE_SECURE: 1
+          CLICKHOUSE_TLS_CA: ${{ github.workspace }}/source/clickhoused/io/testdata/ca.pem
+          CLICKHOUSE_TLS_DIR: ${{ github.workspace }}/source/clickhoused/io/testdata
+          CLICKHOUSE_TLS_CERT_USER: cert_user
+      - name: Integration tests over TLS, LZ4 compression (vibe.d fibers)
+        run: dub run :integration-tests-vibe
+        env:
+          CLICKHOUSE_HOST: localhost:19440
+          CLICKHOUSE_SECURE: 1
+          CLICKHOUSE_TLS_CA: ${{ github.workspace }}/source/clickhoused/io/testdata/ca.pem
+          CLICKHOUSE_TLS_DIR: ${{ github.workspace }}/source/clickhoused/io/testdata
+          CLICKHOUSE_TLS_CERT_USER: cert_user
+          CLICKHOUSE_COMPRESSION: lz4
 
   lint:
     runs-on: ubuntu-latest

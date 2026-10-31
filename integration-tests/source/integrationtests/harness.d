@@ -5,6 +5,7 @@ own I/O context.
 
 Tests marked `needsServer` run only when the `CLICKHOUSE_HOST` environment
 variable is set (see `integrationtests.server`); otherwise they are skipped.
+Tests marked `needsTls` also need `CLICKHOUSE_SECURE=1`.
 +/
 module integrationtests.harness;
 
@@ -17,8 +18,9 @@ import integrationtests.concurrency;
 import integrationtests.insert;
 import integrationtests.mapping;
 import integrationtests.pool;
-import integrationtests.server : serverConfigured;
+import integrationtests.server : serverConfigured, tlsConfigured;
 import integrationtests.smoke;
+import integrationtests.tls;
 import integrationtests.types;
 
 /// Integration test entry point. Throws on failure.
@@ -33,6 +35,8 @@ struct TestCase
     TestFunction run;
     /// Whether the test needs a ClickHouse server.
     bool needsServer;
+    /// Whether the test needs the server over TLS (`CLICKHOUSE_SECURE=1`).
+    bool needsTls;
 }
 
 /// All integration tests, in execution order.
@@ -71,6 +75,9 @@ immutable TestCase[] allTests = [
     TestCase("struct mapping round trip", &testStructRoundTrip, true),
     TestCase("struct mapping errors", &testStructErrors, true),
     TestCase("SQL literals", &testFormatLiteral, true),
+    TestCase("TLS: connection details", &testTlsConnection, true, true),
+    TestCase("TLS: certificate verification", &testTlsVerification, true, true),
+    TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),
 ];
 
 /// Settings passed from the runner to the tests.
@@ -94,12 +101,13 @@ int runAllTests(RunnerContext runner, const TestCase[] extraTests = null)
 {
     currentRunner = runner;
     const withServer = serverConfigured();
+    const withTls = withServer && tlsConfigured();
     if (!withServer)
         writefln("[%s] CLICKHOUSE_HOST is not set: skipping tests that need a server", runner.name);
     int failures, skipped;
     foreach (test; allTests ~ extraTests)
     {
-        if (test.needsServer && !withServer)
+        if ((test.needsServer && !withServer) || (test.needsTls && !withTls))
         {
             skipped++;
             writefln("[%s] SKIP  %s", runner.name, test.name);

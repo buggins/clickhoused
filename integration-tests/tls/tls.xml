@@ -1,0 +1,15 @@
+<!-- TLS for the clickhoused integration tests: the secure native port 9440, the
+     test server certificate, and client certificates verified when presented. -->
+<clickhouse>
+    <tcp_port_secure>9440</tcp_port_secure>
+    <openSSL>
+        <server>
+            <certificateFile>/etc/clickhouse-server/certs/server.pem</certificateFile>
+            <privateKeyFile>/etc/clickhouse-server/certs/server.key</privateKeyFile>
+            <caConfig>/etc/clickhouse-server/certs/ca.pem</caConfig>
+            <loadDefaultCAFile>false</loadDefaultCAFile>
+            <verificationMode>relaxed</verificationMode>
+            <disableProtocols>sslv2,sslv3,tlsv1,tlsv1_1</disableProtocols>
+        </server>
+    </openSSL>
+</clickhouse>

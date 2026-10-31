@@ -224,7 +224,7 @@ Don't modify any of these repositories unless the user explicitly asks.
   - `QueryResult.close()` cancels and discards (server errors ignored); `QueryResult.drain()` reads to the end without cancelling. `exec()` uses `drain()`: never cancel a DDL statement.
 - **Connection strings and failover (M5b):**
   - DSN: `clickhouse://user:pass@h1:9000,h2/db?param=...`. Known parameters are options; `pool_*` parameters are for `PoolOptions.fromDsn`; anything else becomes a server setting.
-  - `secure`/`tls` are rejected until TLS exists, so they never silently fall back to plain text.
+  - `secure`/`tls` turn on TLS (`ConnectionOptions.secure`, `tls`: CA file, client certificate, server name, `skip_verify`). The port defaults to 0, meaning 9000, or 9440 with TLS; `Connection.host` reports the port in use.
   - Connecting tries each host: network and protocol errors move to the next host, a server-rejected login doesn't. `Connection.host` reports the chosen host.
 - **Connection pool (M5b):**
   - Thread mode: one shared `SubPool` (`ThreadPoolSync`: mutex and condition).
@@ -240,6 +240,9 @@ Don't modify any of these repositories unless the user explicitly asks.
 - **vibe-core versions:** the optional dependency accepts `>=1.22.0 <3.0.0`.
   - Downstream projects (ddbc's example) pin vibe-core 1.x, and dub activates an optional dependency whenever the root has it, so a too-narrow range breaks *their* dependency resolution.
   - `:integration-tests-vibe1` runs the vibe tests against vibe-core 1.22.6; `vibecore.d` must compile with both 1.x and 2.x.
+- **TLS** (`io/tls.d`): `TlsTransport` wraps the raw transport in `Connection.connectTo`; `TlsContext.client` is fetched once before the host loop, so a missing OpenSSL or a bad certificate file fails immediately with a `ClientException`, while handshake and verification failures are `ConnectionException`s that move on to the next host.
+  - Integration tests over TLS: `sh integration-tests/tls/start-server.sh [tag] [port] [name]` starts a ClickHouse container with TLS on 9440 (mapped to 19440 by default) using the certificates in `source/clickhoused/io/testdata`; then set `CLICKHOUSE_SECURE=1`, `CLICKHOUSE_TLS_CA`, `CLICKHOUSE_TLS_DIR` and `CLICKHOUSE_TLS_CERT_USER=cert_user` (see `integrationtests.server`). The whole suite then runs encrypted, plus the `needsTls` tests.
+  - On Windows, closing a socket with unread data resets the connection, which can discard data in transit (a close_notify included).
 - **ZSTD** is optional. The `zstd` dub configuration defines `version (ClickHousedZstd)` and links `libzstd`. Test it with:
   - `dub test -c zstd`;
   - `CLICKHOUSE_COMPRESSION=zstd dub run :integration-tests-phobos --override-config=clickhoused/zstd`.
