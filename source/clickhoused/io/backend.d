@@ -46,6 +46,21 @@ interface IoBackend
 
     /// Creates a lock with a wait/notify condition, for the connection pool.
     PoolSync newPoolSync() @safe;
+
+    /++
+    Creates a mutual-exclusion lock that may be held across blocking I/O: a
+    thread mutex in thread mode, a task mutex in fiber mode. Not recursive.
+    +/
+    IoLock newLock() @safe;
+}
+
+/// A non-recursive lock, created by `IoBackend.newLock`.
+interface IoLock
+{
+    /// Acquires the lock, blocking (or suspending the task) while another holder has it.
+    void lock() @safe;
+    /// Releases the lock.
+    void unlock() @safe;
 }
 
 /++

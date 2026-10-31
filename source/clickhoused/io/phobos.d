@@ -10,7 +10,7 @@ import core.time : Duration;
 import std.socket;
 
 import clickhoused.exception : ConnectionException;
-import clickhoused.io.backend : IoBackend, PoolSync;
+import clickhoused.io.backend : IoBackend, IoLock, PoolSync;
 import clickhoused.io.transport : Transport;
 
 /// `Transport` over a connected, blocking `std.socket.Socket`.
@@ -125,6 +125,12 @@ final class PhobosBackend : IoBackend
         return new ThreadPoolSync;
     }
 
+    /// A `core.sync` mutex.
+    override IoLock newLock() @safe
+    {
+        return new ThreadLock;
+    }
+
     /++
     Resolves `host` and connects to the first address that accepts the connection.
 
@@ -186,6 +192,31 @@ final class ThreadPoolSync : PoolSync
     override void notifyAll() @trusted
     {
         condition.notifyAll();
+    }
+}
+
+/// `IoLock` for threads: a `core.sync` mutex.
+final class ThreadLock : IoLock
+{
+    import core.sync.mutex : Mutex;
+
+    private Mutex mutex;
+
+    /// Creates an unlocked lock.
+    this() @trusted
+    {
+        // the core.sync constructor is not annotated @safe; creating a mutex is memory-safe
+        mutex = new Mutex;
+    }
+
+    override void lock() @trusted
+    {
+        mutex.lock();
+    }
+
+    override void unlock() @trusted
+    {
+        mutex.unlock();
     }
 }
 

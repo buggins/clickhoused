@@ -26,7 +26,7 @@ import vibe.core.stream : IOMode;
 import vibe.core.task : InterruptException;
 
 import clickhoused.exception : ClientException, ConnectionException;
-import clickhoused.io.backend : IoBackend, PoolSync;
+import clickhoused.io.backend : IoBackend, IoLock, PoolSync;
 import clickhoused.io.transport : Transport;
 
 /// `Transport` over a vibe-core `TCPConnection`.
@@ -150,6 +150,12 @@ final class VibeBackend : IoBackend
     {
         return new FiberPoolSync;
     }
+
+    /// A vibe-core task mutex: holding it across blocking I/O suspends other tasks that want it.
+    override IoLock newLock() @safe
+    {
+        return new FiberLock;
+    }
 }
 
 /++
@@ -186,6 +192,31 @@ final class FiberPoolSync : PoolSync
     override void notifyAll() @safe
     {
         event.emit();
+    }
+}
+
+/// `IoLock` for tasks: a vibe-core `TaskMutex`.
+final class FiberLock : IoLock
+{
+    import vibe.core.sync : TaskMutex;
+
+    private TaskMutex mutex;
+
+    /// Creates an unlocked lock.
+    this() @trusted
+    {
+        // TaskMutex derives from core.sync's Mutex, whose constructor is not @safe; creating it is memory-safe
+        mutex = new TaskMutex;
+    }
+
+    override void lock() @trusted
+    {
+        mutex.lock();
+    }
+
+    override void unlock() @trusted
+    {
+        mutex.unlock();
     }
 }
 
