@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
+## Unreleased
+
+### Added
+- **`Array(T)`** for all supported element types, nested arrays and `Array(Nullable(T))` (#1). `ArrayColumn` keeps the offsets and the element column as on the wire; `getString` matches the server's `toString()`.
+- D arrays map to `Array` columns in struct mapping, `readValue`, `Inserter.addRow`/`addStruct` and `Connection.insert` (`long[]`, `string[][]`, `Nullable!int[]`, ...). Array text such as `[1, 2]` or `['a', NULL]` is accepted too.
+- `Column.getQuotedString`: a value as ClickHouse writes it inside an array.
+
 ## 0.2.0 — 2026-10-31
 
 ### Added

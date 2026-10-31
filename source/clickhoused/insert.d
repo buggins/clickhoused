@@ -22,7 +22,7 @@ module clickhoused.insert;
 
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
-import std.traits : isFloatingPoint, isIntegral, isSigned, isSomeString;
+import std.traits : isDynamicArray, isFloatingPoint, isIntegral, isSigned, isSomeString;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
@@ -134,7 +134,8 @@ final class Inserter
 
     Accepted value types: integers, floating-point numbers, `bool`, strings,
     `const(ubyte)[]`, `std.datetime.Date`, `std.datetime.SysTime`, `std.uuid.UUID`,
-    D enums (stored by member name), `null` and `std.typecons.Nullable`.
+    D enums (stored by member name), `null`, `std.typecons.Nullable`, and
+    dynamic arrays of these for `Array` columns (`[1, 2]`, `["a"]`, `[[1], []]`).
     Values are converted to the column types with range checks.
 
     Rows are buffered and sent when `maxBlockRows` or `maxBlockBytes` is reached.
@@ -470,6 +471,21 @@ void appendValue(T)(Column column, T value) @safe
         column.appendString(value.to!string);
     else static if (is(U : const(ubyte)[]))
         column.appendBytes(value);
+    else static if (isDynamicArray!U)
+    {
+        import clickhoused.types.array : ArrayColumn;
+
+        auto array = cast(ArrayColumn) column;
+        if (array is null)
+            throw new ClientException("Cannot store an array in column '" ~ column.name ~ "' (" ~ column.typeName
+                    ~ ")");
+        const before = array.elements.length;
+        scope (failure)
+            array.elements.truncate(before); // leave the column as it was
+        foreach (element; value)
+            appendValue(array.elements, element);
+        array.endRow();
+    }
     else static if (is(U == Date))
         column.appendDate(value);
     else static if (is(U == SysTime))
@@ -486,6 +502,13 @@ private size_t estimateSize(T)(T value) @safe pure nothrow
         return 1;
     else static if (is(T : const(char)[]) || is(T : const(ubyte)[]))
         return value.length + 8;
+    else static if (isDynamicArray!T)
+    {
+        size_t size = 8;
+        foreach (element; value)
+            size += estimateSize(element);
+        return size;
+    }
     else
         return 8;
 }

@@ -12,6 +12,7 @@ module integrationtests.harness;
 import core.exception : AssertError;
 import std.stdio : writefln, stderr;
 
+import integrationtests.arrays;
 import integrationtests.basic;
 import integrationtests.compression;
 import integrationtests.concurrency;
@@ -75,6 +76,9 @@ immutable TestCase[] allTests = [
     TestCase("struct mapping round trip", &testStructRoundTrip, true),
     TestCase("struct mapping errors", &testStructErrors, true),
     TestCase("SQL literals", &testFormatLiteral, true),
+    TestCase("Array: read every element type", &testArrayRead, true),
+    TestCase("Array: many rows", &testArrayManyRows, true),
+    TestCase("Array: insert and struct mapping", &testArrayInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

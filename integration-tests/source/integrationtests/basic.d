@@ -146,9 +146,9 @@ void testUnsupportedType()
     auto conn = connectToServer();
     scope (exit)
         conn.close();
-    auto e = collectException!ClientException(conn.exec("SELECT [1, 2, 3] AS arr"));
+    auto e = collectException!ClientException(conn.exec("SELECT map('a', 1) AS m"));
     enforce(e !is null, "no exception");
-    enforce(e.msg.canFind("Array(UInt8)"), "type name missing from message: " ~ e.msg);
+    enforce(e.msg.canFind("Map(String, UInt8)"), "type name missing from message: " ~ e.msg);
     enforce(!conn.isOpen, "connection should be closed");
     assertThrown!ClientException(conn.ping());
 }
