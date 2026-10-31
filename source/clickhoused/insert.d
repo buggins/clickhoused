@@ -33,6 +33,7 @@ import clickhoused.exception : ClientException, ServerException;
 import clickhoused.protocol.codes : ServerPacket;
 import clickhoused.protocol.packets : readException, writeDataHeader;
 import clickhoused.types.decimal : Decimal, appendDecimalTo;
+import clickhoused.types.ip : IPv4, IPv4Column, IPv6, IPv6Column;
 import clickhoused.types.wideint : isWideInt, WideIntColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.factory : createColumn;
@@ -138,7 +139,7 @@ final class Inserter
     Accepted value types: integers, floating-point numbers, `bool`, strings,
     `const(ubyte)[]`, `std.datetime.Date`, `std.datetime.SysTime`, `std.uuid.UUID`,
     D enums (stored by member name), `Int128`/`UInt128`/`Int256`/`UInt256`,
-    `std.bigint.BigInt`, `Decimal`, `null`, `std.typecons.Nullable`, and
+    `std.bigint.BigInt`, `Decimal`, `IPv4`, `IPv6`, `null`, `std.typecons.Nullable`, and
     dynamic arrays of these for `Array` columns (`[1, 2]`, `["a"]`, `[[1], []]`).
     Values are converted to the column types with range checks.
 
@@ -505,6 +506,20 @@ void appendValue(T)(Column column, T value) @safe
     }
     else static if (is(U == BigInt))
         column.appendString(value.toDecimalString());
+    else static if (is(U == IPv4))
+    {
+        if (auto typed = cast(IPv4Column) column)
+            typed.appendIPv4(value);
+        else
+            column.appendString(value.toString()); // an IPv6 column stores it IPv4-mapped
+    }
+    else static if (is(U == IPv6))
+    {
+        if (auto typed = cast(IPv6Column) column)
+            typed.appendIPv6(value);
+        else
+            column.appendString(value.toString());
+    }
     else static if (is(U == Decimal))
     {
         if (!appendDecimalTo(column, value))

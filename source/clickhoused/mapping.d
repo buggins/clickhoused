@@ -43,6 +43,7 @@ import clickhoused.connection : QueryResult, QueryStats;
 import clickhoused.exception : ClientException;
 import clickhoused.types.column : Column;
 import clickhoused.types.decimal : Decimal, decimalAt;
+import clickhoused.types.ip : IPv4, IPv4Column, IPv6, IPv6Column;
 import clickhoused.types.wideint : isWideInt, WideIntColumn;
 
 /// The value of a `@column("name")` attribute.
@@ -96,7 +97,7 @@ template columnNames(T) if (is(T == struct))
 /++
 Whether values of type `T` can be read from and written to columns: numbers,
 `Int128`, `UInt128`, `Int256`, `UInt256`, `std.bigint.BigInt` (any integer
-column), `Decimal` (any numeric column), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
+column), `Decimal` (any numeric column), `IPv4`, `IPv6`, `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
 `std.typecons.Nullable` of these, and dynamic arrays of mappable values
 (for `Array` columns; `ubyte[]` stays the type for `String` bytes).
 +/
@@ -110,7 +111,8 @@ template isMappableValue(T)
     else
         enum isMappableValue = isIntegral!U || isFloatingPoint!U || is(U == bool) || is(U == string)
             || is(U == ubyte[]) || is(U == immutable(ubyte)[]) || is(U == Date) || is(U == SysTime) || is(U == UUID)
-            || is(U == enum) || isWideInt!U || is(U == BigInt) || is(U == Decimal);
+            || is(U == enum) || isWideInt!U || is(U == BigInt) || is(U == Decimal) || is(U == IPv4)
+            || is(U == IPv6);
 }
 
 /// Whether `T` is a D array that maps to an `Array` column (strings and `ubyte[]` don't).
@@ -193,6 +195,22 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
                 throw new ClientException(
                         "Value of column '" ~ column.name ~ "' (" ~ column.typeName
                         ~ ") does not fit in " ~ U.stringof);
+        }
+        else static if (is(U == IPv4) || is(U == IPv6))
+        {
+            static if (is(U == IPv4))
+                auto typed = cast(IPv4Column) column;
+            else
+                auto typed = cast(IPv6Column) column;
+            if (typed !is null)
+                return typed[row];
+            // Other columns: through the text (an IPv4 column gives IPv4-mapped IPv6 addresses)
+            try
+                return U.fromString(column.getString(row));
+            catch (ClientException)
+                throw new ClientException(
+                        "Value of column '" ~ column.name ~ "' (" ~ column.typeName
+                        ~ ") is not an " ~ U.stringof ~ " address");
         }
         else static if (is(U == Decimal))
         {
@@ -573,4 +591,28 @@ private string columnList(Block block) @safe
     appendValue(n, Nullable!Decimal(Decimal.fromString("-1.00001")));
     assert(readValue!(Nullable!Decimal)(n, 0).isNull);
     assert(readValue!(Nullable!Decimal)(n, 1).get.toString() == "-1.00001");
+}
+
+// IP addresses to and from columns
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.factory : createColumn;
+
+    auto v4 = createColumn("a", "IPv4");
+    appendValue(v4, IPv4.fromString("10.0.0.1"));
+    appendValue(v4, "192.168.1.1");
+    assert(readValue!IPv4(v4, 0) == IPv4(0x0a00_0001) && readValue!string(v4, 1) == "192.168.1.1");
+    assert(readValue!uint(v4, 0) == 0x0a00_0001);
+    assert(readValue!IPv6(v4, 0).toString() == "::ffff:10.0.0.1"); // mapped
+
+    auto v6 = createColumn("b", "Nullable(IPv6)");
+    appendValue(v6, IPv6.fromString("::1"));
+    appendValue(v6, IPv4.fromString("1.2.3.4")); // stored IPv4-mapped
+    appendValue(v6, null);
+    assert(readValue!IPv6(v6, 0).toString() == "::1" && readValue!string(v6, 1) == "::ffff:1.2.3.4");
+    assert(readValue!(Nullable!IPv6)(v6, 2).isNull);
+    assertThrown!ClientException(readValue!IPv4(v6, 0));
+    assertThrown!ClientException(appendValue(createColumn("c", "IPv4"), IPv6.fromString("::1")));
 }

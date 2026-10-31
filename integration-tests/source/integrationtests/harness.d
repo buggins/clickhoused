@@ -18,6 +18,7 @@ import integrationtests.compression;
 import integrationtests.concurrency;
 import integrationtests.decimal;
 import integrationtests.insert;
+import integrationtests.ip;
 import integrationtests.lowcardinality;
 import integrationtests.mapping;
 import integrationtests.pool;
@@ -91,6 +92,9 @@ immutable TestCase[] allTests = [
     TestCase("Decimal: read", &testDecimalRead, true),
     TestCase("Decimal: many rows", &testDecimalManyRows, true),
     TestCase("Decimal: insert", &testDecimalInsert, true),
+    TestCase("IPv4/IPv6: read", &testIpRead, true),
+    TestCase("IPv4/IPv6: many rows", &testIpManyRows, true),
+    TestCase("IPv4/IPv6: insert", &testIpInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),
