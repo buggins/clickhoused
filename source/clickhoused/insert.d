@@ -20,6 +20,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.insert;
 
+import std.bigint : BigInt, toDecimalString;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
 import std.traits : isDynamicArray, isFloatingPoint, isIntegral, isSigned, isSomeString;
@@ -31,6 +32,7 @@ import clickhoused.connection : Connection, QueryStats;
 import clickhoused.exception : ClientException, ServerException;
 import clickhoused.protocol.codes : ServerPacket;
 import clickhoused.protocol.packets : readException, writeDataHeader;
+import clickhoused.types.wideint : isWideInt, WideIntColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.factory : createColumn;
 import clickhoused.types.parser : parseType;
@@ -134,7 +136,8 @@ final class Inserter
 
     Accepted value types: integers, floating-point numbers, `bool`, strings,
     `const(ubyte)[]`, `std.datetime.Date`, `std.datetime.SysTime`, `std.uuid.UUID`,
-    D enums (stored by member name), `null`, `std.typecons.Nullable`, and
+    D enums (stored by member name), `Int128`/`UInt128`/`Int256`/`UInt256`,
+    `std.bigint.BigInt`, `null`, `std.typecons.Nullable`, and
     dynamic arrays of these for `Array` columns (`[1, 2]`, `["a"]`, `[[1], []]`).
     Values are converted to the column types with range checks.
 
@@ -492,6 +495,15 @@ void appendValue(T)(Column column, T value) @safe
         column.appendSysTime(value);
     else static if (is(U == UUID))
         column.appendUUID(value);
+    else static if (isWideInt!U)
+    {
+        if (auto wide = cast(WideIntColumn!U) column)
+            wide.data ~= value;
+        else
+            column.appendString(value.toString()); // other columns parse the decimal text, with range checks
+    }
+    else static if (is(U == BigInt))
+        column.appendString(value.toDecimalString());
     else
         static assert(0, "Cannot insert values of type " ~ T.stringof);
 }

@@ -10,11 +10,14 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.literal;
 
+import std.bigint : BigInt, toDecimalString;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
 import std.traits : isArray, isFloatingPoint, isIntegral, isSomeString, Unqual;
 import std.typecons : Nullable;
 import std.uuid : UUID;
+
+import clickhoused.types.wideint : Int128, UInt256, isWideInt;
 
 /++
 Formats `value` as a SQL literal:
@@ -24,6 +27,9 @@ $(UL
     $(LI `Date` as `toDate32('YYYY-MM-DD')` (years 1900 to 2299);)
     $(LI `SysTime` as `toDateTime64('…', 7, 'UTC')`, the exact point in time;)
     $(LI `UUID` as `toUUID('…')`; D enums as their quoted member name;)
+    $(LI `Int128`, `UInt128`, `Int256`, `UInt256` as `toInt128('…')` and so on, and
+        `std.bigint.BigInt` as `toInt256('…')`: ClickHouse would read a plain literal
+        beyond 64 bits as `Float64`;)
     $(LI `null` and empty `Nullable` as `NULL`; other arrays as `[…]`.)
 )
 +/
@@ -74,6 +80,10 @@ string formatLiteral(T)(auto ref const T value) @safe
     }
     else static if (is(U == UUID))
         return "toUUID('" ~ value.toString() ~ "')";
+    else static if (isWideInt!U)
+        return "to" ~ U.typeName ~ "('" ~ value.toString() ~ "')";
+    else static if (is(U == BigInt))
+        return "toInt256('" ~ value.toDecimalString() ~ "')";
     else static if (isArray!U)
     {
         string s = "[";
@@ -115,6 +125,9 @@ string formatLiteral(T)(auto ref const T value) @safe
     const ubyte[] bytes = [0xFF, 'a'];
     assert(formatLiteral(bytes) == "'\xFFa'");
     assert(formatLiteral(Date(2025, 10, 29)) == "toDate32('2025-10-29')");
+    assert(formatLiteral(Int128.min) == "toInt128('-170141183460469231731687303715884105728')");
+    assert(formatLiteral(UInt256(5)) == "toUInt256('5')");
+    assert(formatLiteral(BigInt("-12345678901234567890123")) == "toInt256('-12345678901234567890123')");
     assert(formatLiteral(SysTime(DateTime(2025, 10, 29, 12, 34, 56), UTC()) + 789.msecs)
             == "toDateTime64('2025-10-29 12:34:56.7890000', 7, 'UTC')");
     assert(formatLiteral(
