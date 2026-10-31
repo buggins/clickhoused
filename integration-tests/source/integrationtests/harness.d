@@ -25,6 +25,7 @@ import integrationtests.pool;
 import integrationtests.server : serverConfigured, tlsConfigured;
 import integrationtests.smoke;
 import integrationtests.tls;
+import integrationtests.tuple;
 import integrationtests.types;
 import integrationtests.wideint;
 
@@ -95,6 +96,9 @@ immutable TestCase[] allTests = [
     TestCase("IPv4/IPv6: read", &testIpRead, true),
     TestCase("IPv4/IPv6: many rows", &testIpManyRows, true),
     TestCase("IPv4/IPv6: insert", &testIpInsert, true),
+    TestCase("Tuple: read", &testTupleRead, true),
+    TestCase("Tuple: many rows", &testTupleManyRows, true),
+    TestCase("Tuple: insert and struct mapping", &testTupleInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

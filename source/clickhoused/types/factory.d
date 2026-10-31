@@ -17,6 +17,7 @@ import clickhoused.types.misc;
 import clickhoused.types.numeric;
 import clickhoused.types.parser : TypeArgKind, TypeNode, parseType;
 import clickhoused.types.string;
+import clickhoused.types.tuple : TupleColumn;
 import clickhoused.types.wideint;
 
 /++
@@ -185,7 +186,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         if (type.args.length != 1 || type.args[0].kind != TypeArgKind.type)
             throw invalid();
         const nestedType = type.args[0].type;
-        if (nestedType.name == "Nullable" || nestedType.name == "Array" || nestedType.name == "LowCardinality")
+        if (nestedType.name == "Nullable" || nestedType.name == "Array" || nestedType.name == "LowCardinality"
+                || nestedType.name == "Tuple")
             throw invalid();
         auto nested = createColumn(name, nestedType.toString(), nestedType, defaultTimezone);
         return new NullableColumn(name, typeName, nested);
@@ -199,7 +201,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         if (type.args.length != 1 || type.args[0].kind != TypeArgKind.type)
             throw invalid();
         const innerType = type.args[0].type;
-        if (innerType.name == "LowCardinality" || innerType.name == "Array")
+        if (innerType.name == "LowCardinality" || innerType.name == "Array" || innerType.name == "Tuple")
             throw invalid();
         // The dictionary holds the inner type without Nullable: NULL is index 0
         const keyType = innerType.name == "Nullable" ? innerType.args[0].type : innerType;
@@ -211,6 +213,20 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         auto values = createColumn(name, innerType.toString(), innerType, defaultTimezone);
         newKeys(); // fails now, not when the first block arrives, if the key type is unsupported
         return new LowCardinalityColumn(name, typeName, values, &newKeys);
+    case "Tuple":
+        Column[] elements;
+        string[] names;
+        foreach (i, ref arg; type.args)
+        {
+            // Either every element has a name or none has
+            const named = arg.kind == TypeArgKind.namedType;
+            if ((arg.kind != TypeArgKind.type && !named) || (i > 0 && named != (names.length != 0)))
+                throw invalid();
+            if (named)
+                names ~= arg.text;
+            elements ~= createColumn(name, arg.type.toString(), arg.type, defaultTimezone);
+        }
+        return new TupleColumn(name, typeName, elements, names);
     case "Nothing":
         return new NothingColumn(name, typeName);
     default:
@@ -243,6 +259,11 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     assert(d.precision == 20 && d.scale == 3);
     assert((cast(Decimal64Column) createColumn("d", "Decimal64(4)")).precision == 18);
     assert(cast(Decimal256Column) createColumn("d", "Decimal256(0)") !is null);
+    auto tuple = cast(TupleColumn) createColumn("t", "Tuple(id UInt64, `full name` String)");
+    assert(tuple.names == ["id", "full name"] && cast(StringColumn) tuple.elements[1]!is null);
+    assert(!(cast(TupleColumn) createColumn("t", "Tuple(UInt8, String)")).isNamed);
+    assertThrown!ProtocolException(createColumn("x", "Tuple(a UInt8, String)"));
+    assertThrown!ProtocolException(createColumn("x", "Nullable(Tuple(UInt8))"));
     assertThrown!ProtocolException(createColumn("x", "Decimal(5, 6)"));
     assertThrown!ProtocolException(createColumn("x", "Decimal(77, 0)"));
     assertThrown!ProtocolException(createColumn("x", "Decimal(10)"));
@@ -267,6 +288,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Int128", "UInt128", "Int256", "UInt256", "Array(Nullable(Int256))",
         "Decimal(9, 2)", "Decimal(18, 0)", "Decimal(38, 10)", "Decimal(76, 76)",
         "Nullable(Decimal(20, 3))", "IPv4", "IPv6", "Array(Nullable(IPv6))",
+        "Tuple(Int64, String)", "Tuple(a Array(Date), b Nullable(String))",
+        "Array(Tuple(LowCardinality(String), UInt8))",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -309,6 +332,13 @@ version (unittest)
             fill(n.nested);
             n.nulls = [false, true];
         }
+        else if (auto tuple = cast(TupleColumn) c)
+        {
+            foreach (e; tuple.elements)
+                fill(e);
+            tuple.endRow();
+            tuple.endRow(); // two rows, as in every element
+        }
         else if (auto lc = cast(LowCardinalityColumn) c)
             fill(lc.values);
         else if (auto a = cast(ArrayColumn) c)
@@ -323,6 +353,8 @@ version (unittest)
         }
         else if (auto x = cast(Int64Column) c)
             x.data = [long.min, 42];
+        else if (auto x = cast(UInt8Column) c)
+            x.data = [0, 255];
         else if (auto x = cast(IPv4Column) c)
             x.data = [0x0102_0304, uint.max];
         else if (auto x = cast(IPv6Column) c)

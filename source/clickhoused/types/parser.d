@@ -81,9 +81,28 @@ struct TypeArg
         case TypeArgKind.enumValue:
             return quote(text) ~ " = " ~ number.to!string;
         case TypeArgKind.namedType:
-            return text ~ " " ~ type.toString();
+            return quoteName(text) ~ " " ~ type.toString();
         }
     }
+}
+
+/// An element name as written in a type: in backquotes unless it is a plain identifier.
+private string quoteName(string name) @safe pure
+{
+    bool plain = name.length != 0 && !(name[0] >= '0' && name[0] <= '9');
+    foreach (c; name)
+        if (!(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_'))
+            plain = false;
+    if (plain)
+        return name;
+    string s = "`";
+    foreach (char c; name)
+    {
+        if (c == '`' || c == '\\')
+            s ~= '\\';
+        s ~= c;
+    }
+    return s ~ "`";
 }
 
 /++
@@ -129,7 +148,8 @@ TypeNode parseType(string typeName) @safe pure
         assert(parseType(s).toString() == s, s);
 
     // Spacing is irrelevant; backquoted element names are accepted
-    assert(parseType(" Tuple( `my field` UInt8 ,x String ) ").toString() == "Tuple(my field UInt8, x String)");
+    assert(parseType(" Tuple( `my field` UInt8 ,x String ) ").toString() == "Tuple(`my field` UInt8, x String)");
+    assert(parseType("Tuple(\n    a UInt8,\n    `1` String)").toString() == "Tuple(a UInt8, `1` String)");
 
     foreach (bad; [
         "", "(", "Nullable(", "Nullable(String", "Enum8('a' = )", "UInt8)", "1abc", "A('x"

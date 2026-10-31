@@ -97,7 +97,8 @@ template columnNames(T) if (is(T == struct))
 /++
 Whether values of type `T` can be read from and written to columns: numbers,
 `Int128`, `UInt128`, `Int256`, `UInt256`, `std.bigint.BigInt` (any integer
-column), `Decimal` (any numeric column), `IPv4`, `IPv6`, `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
+column), `Decimal` (any numeric column), `IPv4`, `IPv6`, structs and
+`std.typecons.Tuple` (for `Tuple` columns, see `isTupleValue`), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
 `std.typecons.Nullable` of these, and dynamic arrays of mappable values
 (for `Array` columns; `ubyte[]` stays the type for `String` bytes).
 +/
@@ -108,11 +109,35 @@ template isMappableValue(T)
         enum isMappableValue = isMappableValue!V;
     else static if (isMappedArray!U)
         enum isMappableValue = isMappableValue!(typeof(U.init[0]));
+    else static if (isTupleValue!U)
+        enum isMappableValue = true;
     else
         enum isMappableValue = isIntegral!U || isFloatingPoint!U || is(U == bool) || is(U == string)
             || is(U == ubyte[]) || is(U == immutable(ubyte)[]) || is(U == Date) || is(U == SysTime) || is(U == UUID)
             || is(U == enum) || isWideInt!U || is(U == BigInt) || is(U == Decimal) || is(U == IPv4)
             || is(U == IPv6);
+}
+
+/++
+Whether `T` is a struct that maps to a `Tuple` column: any struct (including
+`std.typecons.Tuple`) whose mapped fields are all mappable values, other than
+the structs that are values themselves (`Date`, `SysTime`, `Decimal`, ...).
++/
+package template isTupleValue(T)
+{
+    static if (is(T == struct) && !is(T == Date) && !is(T == SysTime) && !is(T == UUID) && !isWideInt!T
+            && !is(T == BigInt) && !is(T == Decimal) && !is(T == IPv4) && !is(T == IPv6) && !is(T : Nullable!V, V))
+        enum isTupleValue = () {
+            bool all = true;
+            static foreach (i; 0 .. T.tupleof.length)
+                {
+                static if (!hasUDA!(T.tupleof[i], IgnoreField))
+                    all = all && isMappableValue!(typeof(T.tupleof[i]));
+            }
+            return all;
+        }();
+    else
+        enum isTupleValue = false;
 }
 
 /// Whether `T` is a D array that maps to an `Array` column (strings and `ubyte[]` don't).
@@ -266,6 +291,24 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
             return column.getSysTime(row);
         else static if (is(U == UUID))
             return column.getUUID(row);
+        else static if (isTupleValue!U)
+        {
+            import clickhoused.types.tuple : TupleColumn;
+
+            auto tuple = cast(TupleColumn) column;
+            if (tuple is null)
+                throw new ClientException("Column '" ~ column.name ~ "' (" ~ column.typeName
+                        ~ ") is not a Tuple column, which " ~ U.stringof ~ " needs");
+            const positions = tuple.fieldPositions(columnNames!U, U.stringof);
+            U value;
+            size_t k;
+            static foreach (i; 0 .. U.tupleof.length)
+            {
+                static if (!hasUDA!(U.tupleof[i], IgnoreField))
+                    value.tupleof[i] = readValue!(typeof(U.tupleof[i]))(tuple.elements[positions[k++]], row);
+            }
+            return value;
+        }
     }
 }
 
@@ -615,4 +658,50 @@ private string columnList(Block block) @safe
     assert(readValue!(Nullable!IPv6)(v6, 2).isNull);
     assertThrown!ClientException(readValue!IPv4(v6, 0));
     assertThrown!ClientException(appendValue(createColumn("c", "IPv4"), IPv6.fromString("::1")));
+}
+
+// Structs and std.typecons.Tuple to and from Tuple columns
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import std.typecons : Tuple, tuple;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.factory : createColumn;
+    import clickhoused.types.tuple : TupleColumn;
+
+    static struct Point
+    {
+        double x;
+        double y;
+    }
+
+    static struct Named
+    {
+        @column("full name") string name; // element names, in any order
+        ulong id;
+        @ignore int cache;
+    }
+
+    auto points = createColumn("p", "Tuple(Float64, Float64)"); // no names: by position
+    appendValue(points, Point(1.5, -2));
+    appendValue(points, tuple(3.0, 4.0));
+    assert(points.getString(0) == "(1.5,-2)" && readValue!Point(points, 1) == Point(3, 4));
+    assert(readValue!(Tuple!(double, double))(points, 0) == tuple(1.5, -2.0));
+
+    auto named = createColumn("n", "Tuple(id UInt64, `full name` String)"); // names: by name
+    appendValue(named, Named("Ann", 7));
+    assert(named.getString(0) == "(7,'Ann')");
+    const back = readValue!Named(named, 0);
+    assert(back.name == "Ann" && back.id == 7);
+
+    // Nested in arrays and Nullable fields; a value that doesn't fit leaves nothing behind
+    auto list = createColumn("l", "Array(Tuple(String, Nullable(Int32)))");
+    appendValue(list, [tuple("a", Nullable!int(1)), tuple("b", Nullable!int.init)]);
+    assert(list.getString(0) == "[('a',1),('b',NULL)]");
+    assertThrown!ClientException(appendValue(points, tuple("x", 1.0))); // not a number
+    assert(points.length == 2 && (cast(TupleColumn) points).elements[0].length == 2);
+    assertThrown!ClientException(appendValue(points, tuple(1.0, 2.0, 3.0))); // three fields
+    auto text = createColumn("s", "String");
+    appendValue(text, "x");
+    assertThrown!ClientException(readValue!Point(text, 0));
 }
