@@ -20,6 +20,7 @@ import integrationtests.decimal;
 import integrationtests.insert;
 import integrationtests.ip;
 import integrationtests.lowcardinality;
+import integrationtests.map;
 import integrationtests.mapping;
 import integrationtests.pool;
 import integrationtests.server : serverConfigured, tlsConfigured;
@@ -99,6 +100,9 @@ immutable TestCase[] allTests = [
     TestCase("Tuple: read", &testTupleRead, true),
     TestCase("Tuple: many rows", &testTupleManyRows, true),
     TestCase("Tuple: insert and struct mapping", &testTupleInsert, true),
+    TestCase("Map: read", &testMapRead, true),
+    TestCase("Map: many rows", &testMapManyRows, true),
+    TestCase("Map: insert and struct mapping", &testMapInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),
