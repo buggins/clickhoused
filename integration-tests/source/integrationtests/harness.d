@@ -17,6 +17,7 @@ import integrationtests.basic;
 import integrationtests.compression;
 import integrationtests.concurrency;
 import integrationtests.decimal;
+import integrationtests.geo;
 import integrationtests.insert;
 import integrationtests.ip;
 import integrationtests.lowcardinality;
@@ -103,6 +104,8 @@ immutable TestCase[] allTests = [
     TestCase("Map: read", &testMapRead, true),
     TestCase("Map: many rows", &testMapManyRows, true),
     TestCase("Map: insert and struct mapping", &testMapInsert, true),
+    TestCase("Geo types: read", &testGeoRead, true),
+    TestCase("Geo types: insert and struct mapping", &testGeoInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

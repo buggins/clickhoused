@@ -20,6 +20,7 @@ public import clickhoused.types.column;
 public import clickhoused.types.datetime;
 public import clickhoused.types.decimal;
 public import clickhoused.types.factory;
+public import clickhoused.types.geo;
 public import clickhoused.types.ip;
 public import clickhoused.types.lowcardinality;
 public import clickhoused.types.map;

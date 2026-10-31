@@ -11,6 +11,7 @@ import clickhoused.types.array : ArrayColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.datetime;
 import clickhoused.types.decimal;
+import clickhoused.types.geo : geoUnderlyingType;
 import clickhoused.types.ip : IPv4, IPv4Column, IPv6, IPv6Column;
 import clickhoused.types.lowcardinality : LowCardinalityColumn;
 import clickhoused.types.map : MapColumn;
@@ -238,6 +239,10 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     case "Nothing":
         return new NothingColumn(name, typeName);
     default:
+        // Geo types are named aliases: the column of the underlying type, under the geo type name
+        if (type.args.length == 0)
+            if (auto underlying = geoUnderlyingType(type.name))
+                return createColumn(name, typeName, parseType(underlying), defaultTimezone);
         throw new ClientException("Unsupported column type '" ~ typeName ~ "' (column '" ~ name ~ "')");
     }
 }
@@ -302,6 +307,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Tuple(Int64, String)", "Tuple(a Array(Date), b Nullable(String))",
         "Array(Tuple(LowCardinality(String), UInt8))",
         "Map(String, Int64)", "Map(LowCardinality(String), Array(Nullable(String)))",
+        "Point", "Polygon", "MultiPolygon",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
