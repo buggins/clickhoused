@@ -2,19 +2,20 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
-## Unreleased
+## 0.3.0 — 2026-10-31
+
+Composite and extended column types (tracking issue #10).
 
 ### Added
 - **`Array(T)`** for all supported element types, nested arrays and `Array(Nullable(T))` (#1). `ArrayColumn` keeps the offsets and the element column as on the wire; `getString` matches the server's `toString()`.
 - D arrays map to `Array` columns in struct mapping, `readValue`, `Inserter.addRow`/`addStruct` and `Connection.insert` (`long[]`, `string[][]`, `Nullable!int[]`, ...). Array text such as `[1, 2]` or `['a', NULL]` is accepted too.
-- `Column.getQuotedString`: a value as ClickHouse writes it inside an array.
 - **Native `LowCardinality(T)`** (#2), including `LowCardinality(Nullable(T))` and LowCardinality inside arrays: dictionary-encoded on the wire in both directions, decoded into a plain column of type `T` (`LowCardinalityColumn.values`). The client no longer sends `low_cardinality_allow_in_native_format=0`, which made the server convert such columns.
 - **`Int128`, `UInt128`, `Int256`, `UInt256`** (#4): value types that hold the numbers exactly as stored, with comparison and conversions to and from decimal text, `long`/`ulong`, `double`, `std.bigint.BigInt`, and `std.int128.Int128` on D frontends 2.100+. `std.bigint.BigInt` also maps to any integer column. `formatLiteral` writes them as `toInt128('…')` etc., because ClickHouse reads plain literals beyond 64 bits as `Float64`.
 - **`Decimal(P, S)`** (#3), also as `Decimal32(S)`…`Decimal256(S)`: columns keep the scaled integers as on the wire (`int`, `long`, `Int128`, `Int256`). The `Decimal` value type holds a number exactly with its scale: text (`toString` as the server prints it, `toFixedString` with all digits), `double`, rescaling, numeric comparison; `unscaled.toBigInt()` for arithmetic. Text and doubles with more digits than the scale are truncated towards zero, as the server does; values beyond the precision are rejected. `formatLiteral` writes `toDecimal256('…', S)`.
 - **`IPv4` and `IPv6`** (#5): columns and value types. `IPv4.value` is the address as a number (as in `std.socket.InternetAddress`), `IPv6.bytes` the 16 bytes in network order (as in `Internet6Address`). Text exactly as the server prints it (IPv6 zero compression, dotted IPv4-mapped and -compatible tails); IPv4 text given for IPv6 is stored IPv4-mapped, as the server does. `formatLiteral` writes `toIPv4('…')`/`toIPv6('…')`.
 - **`Tuple(...)`** (#6), including named tuples: `TupleColumn` with one column per element, element access by index or name, text as the server prints it (`(1,'a')`), and tuple text in appends. D structs and `std.typecons.Tuple` map to tuple columns, in struct fields too: by element name when the tuple is named and has every field, otherwise by position. `formatLiteral` writes `std.typecons.Tuple` as `tuple(…)`.
 - **`Map(K, V)`** (#7): `MapColumn`, kept as `Array(Tuple(K, V))` as on the wire (`entries`, `keys`, `values`), so LowCardinality keys and nested maps work. Text as the server prints it (`{'a':1,'b':2}`), map text in appends. `V[K]` associative arrays map to Map columns, and arrays of `Tuple!(K, V)` keep the order and repeated keys. `formatLiteral` writes associative arrays as `map(…)`.
-- `Column.appendFrom` copies a value between columns of the same type; `Column.readStatePrefix`/`writeStatePrefix` handle per-column serialization state.
+- New `Column` methods: `getQuotedString` (a value as ClickHouse writes it inside an array), `appendFrom` (copies a value between columns of the same type), `readStatePrefix`/`writeStatePrefix` (per-column serialization state).
 
 ### Changed
 - `LowCardinality(T)` columns now arrive with their real type name (`LowCardinality(String)`, not `String`) as a `LowCardinalityColumn`. `Block.column!StringColumn("name")` and the other typed accessors still work: for such a column they return the decoded values. Code that casts `block.columns[i]` directly to the plain column class needs `LowCardinalityColumn.values`.
