@@ -106,6 +106,22 @@ abstract class Column
     /// The value in `row` as text, formatted as ClickHouse formats it.
     abstract string getString(size_t row) const @safe;
 
+    /++
+    The value in `row` as ClickHouse writes it inside an array: like
+    `getString`, but strings, dates, times, UUIDs and enum labels are in
+    single quotes with backslash escapes, and NULL is `NULL`.
+    +/
+    string getQuotedString(size_t row) const @safe
+    {
+        return quotedInText ? quoteText(getString(row)) : getString(row);
+    }
+
+    /// Whether `getQuotedString` puts the text of `getString` in quotes.
+    protected @property bool quotedInText() const @safe pure nothrow
+    {
+        return false;
+    }
+
     /// The value in `row` as raw bytes (for `String` and `FixedString`).
     const(ubyte)[] getBytes(size_t row) const @safe
     {
@@ -296,6 +312,58 @@ package void writeFixedValues(T)(BufferedWriter writer, const(T)[] values) @safe
         foreach (v; values)
             writer.writeFixed(v);
     }
+}
+
+/++
+Quotes `text` as ClickHouse does in its text formats: in single quotes, with
+backslash escapes for the quote, the backslash and the control characters
+`\b`, `\f`, `\n`, `\r`, `\t` and `\0`. Other bytes are kept as they are.
++/
+package string quoteText(scope const(char)[] text) @safe pure
+{
+    auto s = "'";
+    foreach (char c; text)
+    {
+        switch (c)
+        {
+        case '\'':
+            s ~= `\'`;
+            break;
+        case '\\':
+            s ~= `\\`;
+            break;
+        case '\b':
+            s ~= `\b`;
+            break;
+        case '\f':
+            s ~= `\f`;
+            break;
+        case '\n':
+            s ~= `\n`;
+            break;
+        case '\r':
+            s ~= `\r`;
+            break;
+        case '\t':
+            s ~= `\t`;
+            break;
+        case '\0':
+            s ~= `\0`;
+            break;
+        default:
+            s ~= c;
+        }
+    }
+    return s ~ "'";
+}
+
+@safe pure unittest
+{
+    // As ClickHouse prints toString(['a\'b', 'c\\d', 'e\nf', '\t\0x', '\x01'])
+    assert(quoteText("a'b") == `'a\'b'`);
+    assert(quoteText("c\\d") == `'c\\d'`);
+    assert(quoteText("e\nf\t\0\b\f\r") == `'e\nf\t\0\b\f\r'`);
+    assert(quoteText("\x01\x7f") == "'\x01\x7f'");
 }
 
 /// Wraps a copy of `value` in a `Variant`, without type qualifiers, so that

@@ -64,6 +64,12 @@ final class UUIDColumn : Column
     }
 
     /// The UUID in the canonical `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` form.
+    /// Quoted inside arrays.
+    override protected @property bool quotedInText() const @safe pure nothrow
+    {
+        return true;
+    }
+
     override string getString(size_t row) const @safe
     {
         return data[row].toString();
@@ -175,6 +181,12 @@ final class EnumColumn(T) : FixedColumn!T if (is(T == byte) || is(T == short))
     }
 
     /// The label.
+    /// Quoted inside arrays.
+    override protected @property bool quotedInText() const @safe pure nothrow
+    {
+        return true;
+    }
+
     override string getString(size_t row) const @safe
     {
         return label(row);
@@ -353,6 +365,12 @@ final class NullableColumn : Column
     {
         checkNotNull(row);
         return nested.getUUID(row);
+    }
+
+    /// `NULL`, or the quoted nested value.
+    override string getQuotedString(size_t row) const @safe
+    {
+        return nulls[row] ? "NULL" : nested.getQuotedString(row);
     }
 
     /// The nested value, or an empty `Variant` for NULL.

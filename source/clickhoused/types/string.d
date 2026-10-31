@@ -48,6 +48,12 @@ final class StringColumn : Column
             writer.writeString(v);
     }
 
+    /// Quoted inside arrays.
+    override protected @property bool quotedInText() const @safe pure nothrow
+    {
+        return true;
+    }
+
     override string getString(size_t row) const @safe
     {
         return data[row];
@@ -184,6 +190,14 @@ final class FixedStringColumn : Column
     }
 
     /// Returns the value with trailing zero bytes removed, as `asString` does.
+    /// Quoted with its zero padding, as ClickHouse writes it inside arrays (`'ab\0'`).
+    override string getQuotedString(size_t row) const @safe
+    {
+        import clickhoused.types.column : quoteText;
+
+        return quoteText(cast(const(char)[]) this[row]);
+    }
+
     override string getString(size_t row) const @safe
     {
         return asString(row);

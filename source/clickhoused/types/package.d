@@ -15,6 +15,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types;
 
+public import clickhoused.types.array;
 public import clickhoused.types.column;
 public import clickhoused.types.datetime;
 public import clickhoused.types.factory;

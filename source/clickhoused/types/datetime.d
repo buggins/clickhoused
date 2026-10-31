@@ -62,6 +62,12 @@ final class DateColumn : FixedColumn!ushort
     }
 
     /// The date as `YYYY-MM-DD`.
+    /// Quoted inside arrays.
+    override protected @property bool quotedInText() const @safe pure nothrow
+    {
+        return true;
+    }
+
     override string getString(size_t row) const @safe
     {
         return this[row].toISOExtString();
@@ -143,6 +149,12 @@ final class Date32Column : FixedColumn!int
     }
 
     /// The date as `YYYY-MM-DD`.
+    /// Quoted inside arrays.
+    override protected @property bool quotedInText() const @safe pure nothrow
+    {
+        return true;
+    }
+
     override string getString(size_t row) const @safe
     {
         return this[row].toISOExtString();
@@ -236,6 +248,12 @@ final class DateTimeColumn : FixedColumn!uint
     }
 
     /// The value as `YYYY-MM-DD hh:mm:ss` in the column timezone.
+    /// Quoted inside arrays.
+    override protected @property bool quotedInText() const @safe pure nothrow
+    {
+        return true;
+    }
+
     override string getString(size_t row) const @safe
     {
         return formatDateTime(this[row], 0);
@@ -335,6 +353,12 @@ final class DateTime64Column : FixedColumn!long
     }
 
     /// The value as `YYYY-MM-DD hh:mm:ss.fff…` (`precision` digits) in the column timezone.
+    /// Quoted inside arrays.
+    override protected @property bool quotedInText() const @safe pure nothrow
+    {
+        return true;
+    }
+
     override string getString(size_t row) const @safe
     {
         const ticks = data[row];

@@ -7,6 +7,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 module clickhoused.types.factory;
 
 import clickhoused.exception : ClientException, ProtocolException;
+import clickhoused.types.array : ArrayColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.datetime;
 import clickhoused.types.misc;
@@ -125,10 +126,16 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         if (type.args.length != 1 || type.args[0].kind != TypeArgKind.type)
             throw invalid();
         const nestedType = type.args[0].type;
-        if (nestedType.name == "Nullable")
+        if (nestedType.name == "Nullable" || nestedType.name == "Array")
             throw invalid();
         auto nested = createColumn(name, nestedType.toString(), nestedType, defaultTimezone);
         return new NullableColumn(name, typeName, nested);
+    case "Array":
+        if (type.args.length != 1 || type.args[0].kind != TypeArgKind.type)
+            throw invalid();
+        const elementType = type.args[0].type;
+        auto elements = createColumn(name, elementType.toString(), elementType, defaultTimezone);
+        return new ArrayColumn(name, typeName, elements);
     case "Nothing":
         return new NothingColumn(name, typeName);
     default:
@@ -149,7 +156,11 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     assert(e.labels[-300] == "x");
     assert(cast(NothingColumn)(cast(NullableColumn) createColumn("n", "Nullable(Nothing)")).nested !is null);
 
-    assertThrown!ClientException(createColumn("x", "Array(UInt8)"));
+    assert(cast(UInt8Column)(cast(ArrayColumn) createColumn("a", "Array(UInt8)")).elements !is null);
+    assertThrown!ClientException(createColumn("x", "Map(String, UInt8)"));
+    assertThrown!ClientException(createColumn("x", "Array(Map(String, UInt8))"));
+    assertThrown!ProtocolException(createColumn("x", "Nullable(Array(UInt8))"));
+    assertThrown!ProtocolException(createColumn("x", "Array(UInt8, UInt8)"));
     assertThrown!ClientException(createColumn("x", "LowCardinality(String)"));
     assertThrown!ProtocolException(createColumn("x", "FixedString(0)"));
     assertThrown!ProtocolException(createColumn("x", "DateTime64(10)"));
@@ -166,7 +177,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     static immutable string[] types = [
         "Int64", "Float64", "Bool", "String", "FixedString(2)", "Date", "Date32", "DateTime('UTC')",
         "DateTime64(3, 'UTC')", "UUID", "Enum8('a' = 1, 'b' = 2)", "Nullable(String)",
-        "Nullable(Nothing)",
+        "Nullable(Nothing)", "Array(Int64)", "Array(Nullable(String))", "Array(Array(Date))",
+        "Array(Nothing)",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -206,6 +218,16 @@ version (unittest)
         {
             fill(n.nested);
             n.nulls = [false, true];
+        }
+        else if (auto a = cast(ArrayColumn) c)
+        {
+            if (cast(NothingColumn) a.elements)
+                a.offsets = [0, 0]; // Array(Nothing) holds only empty arrays
+            else
+            {
+                fill(a.elements); // two elements: [] and [both]
+                a.offsets = [0, 2];
+            }
         }
         else if (auto x = cast(Int64Column) c)
             x.data = [long.min, 42];

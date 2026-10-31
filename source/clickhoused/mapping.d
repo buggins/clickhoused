@@ -33,7 +33,7 @@ module clickhoused.mapping;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
 import std.meta : AliasSeq;
-import std.traits : getUDAs, hasUDA, isFloatingPoint, isIntegral, isSigned, isSomeString, Unqual;
+import std.traits : getUDAs, hasUDA, isDynamicArray, isFloatingPoint, isIntegral, isSigned, isSomeString, Unqual;
 import std.typecons : Nullable;
 import std.uuid : UUID;
 
@@ -90,20 +90,31 @@ template columnNames(T) if (is(T == struct))
     static assert(columnNames!Row == ["id", "full_name"]);
 }
 
-/// Whether values of type `T` can be read from and written to columns.
+/++
+Whether values of type `T` can be read from and written to columns: numbers,
+`bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
+`std.typecons.Nullable` of these, and dynamic arrays of mappable values
+(for `Array` columns; `ubyte[]` stays the type for `String` bytes).
++/
 template isMappableValue(T)
 {
     alias U = Unqual!T;
     static if (is(U : Nullable!V, V))
         enum isMappableValue = isMappableValue!V;
+    else static if (isMappedArray!U)
+        enum isMappableValue = isMappableValue!(typeof(U.init[0]));
     else
         enum isMappableValue = isIntegral!U || isFloatingPoint!U || is(U == bool) || is(U == string)
             || is(U == ubyte[]) || is(U == immutable(ubyte)[]) || is(U == Date) || is(U == SysTime) || is(U == UUID)
             || is(U == enum);
 }
 
+/// Whether `T` is a D array that maps to an `Array` column (strings and `ubyte[]` don't).
+package enum bool isMappedArray(T) = isDynamicArray!T && !isSomeString!T && !is(Unqual!T : const(ubyte)[]);
+
 /++
 Reads the value in `row` of `column` as type `T`, converting with range checks.
+An `Array` column reads into a D array, element by element.
 
 Throws: `ClientException` if the value cannot be converted, or is NULL and
 `T` is not a `Nullable`.
@@ -124,7 +135,21 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
         if (column.isNull(row))
             throw new ClientException("Column '" ~ column.name ~ "' has a NULL value, which " ~ U.stringof
                     ~ " cannot hold; use Nullable!" ~ U.stringof);
-        static if (is(U == enum))
+        static if (isMappedArray!U)
+        {
+            import clickhoused.types.array : ArrayColumn;
+
+            auto array = cast(ArrayColumn) column;
+            if (array is null)
+                throw new ClientException("Column '" ~ column.name ~ "' (" ~ column.typeName
+                        ~ ") is not an Array column, which " ~ U.stringof ~ " needs");
+            U values;
+            values.reserve(array.rowLength(row));
+            foreach (i; array.rowStart(row) .. array.rowEnd(row))
+                values ~= readValue!(typeof(U.init[0]))(array.elements, i);
+            return values;
+        }
+        else static if (is(U == enum))
         {
             import clickhoused.types.misc : Enum16Column, Enum8Column;
             import clickhoused.types.string : StringColumn;
@@ -401,4 +426,37 @@ private string columnList(Block block) @safe
     assertThrown!ClientException(readValue!long(note, 0)); // NULL into a non-Nullable
     block.columns = [ts, sym];
     assertThrown!ClientException(bindColumns!Trade(block)); // missing columns
+}
+
+// D arrays to and from Array columns
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.array : ArrayColumn;
+    import clickhoused.types.factory : createColumn;
+
+    auto ints = cast(ArrayColumn) createColumn("a", "Array(Nullable(Int32))");
+    appendValue(ints, [Nullable!int(1), Nullable!int.init]);
+    appendValue(ints, cast(long[]) null);
+    assert(readValue!(Nullable!int[])(ints, 0) == [Nullable!int(1), Nullable!int.init]);
+    assert(readValue!(long[])(ints, 1) == []);
+    assertThrown!ClientException(readValue!(int[])(ints, 0)); // NULL element
+    assertThrown!ClientException(appendValue(ints, [1L, 99_999_999_999L])); // out of range
+    assert(ints.length == 2 && ints.elements.length == 2); // the failed row left no trace
+
+    auto nested = createColumn("n", "Array(Array(String))");
+    appendValue(nested, [["a", "b"], []]);
+    assert(readValue!(string[][])(nested, 0) == [["a", "b"], []]);
+    assert(readValue!string(nested, 0) == "[['a','b'],[]]");
+
+    // ubyte[] stays the type for String bytes, and also fills Array(UInt8)
+    auto bytes = createColumn("b", "Array(UInt8)");
+    appendValue(bytes, cast(const(ubyte)[])[1, 2]);
+    assert(readValue!(ubyte[])(bytes, 0) == [1, 2] && readValue!(int[])(bytes, 0) == [1, 2]);
+
+    auto plain = createColumn("s", "String");
+    assertThrown!ClientException(appendValue(plain, [1, 2]));
+    appendValue(plain, "x");
+    assertThrown!ClientException(readValue!(int[])(plain, 0));
 }
