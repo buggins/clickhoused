@@ -243,6 +243,8 @@ Don't modify any of these repositories unless the user explicitly asks.
 - **TLS** (`io/tls.d`): `TlsTransport` wraps the raw transport in `Connection.connectTo`; `TlsContext.client` is fetched once before the host loop, so a missing OpenSSL or a bad certificate file fails immediately with a `ClientException`, while handshake and verification failures are `ConnectionException`s that move on to the next host.
   - Integration tests over TLS: `sh integration-tests/tls/start-server.sh [tag] [port] [name]` starts a ClickHouse container with TLS on 9440 (mapped to 19440 by default) using the certificates in `source/clickhoused/io/testdata`; then set `CLICKHOUSE_SECURE=1`, `CLICKHOUSE_TLS_CA`, `CLICKHOUSE_TLS_DIR` and `CLICKHOUSE_TLS_CERT_USER=cert_user` (see `integrationtests.server`). The whole suite then runs encrypted, plus the `needsTls` tests.
   - On Windows, closing a socket with unread data resets the connection, which can discard data in transit (a close_notify included).
+  - Trusted CAs without `tls.caFile`: OpenSSL's default paths, plus on Windows the `ROOT` system store imported through crypt32. macOS needs Homebrew's `openssl@3`; the system LibreSSL is not used.
+  - Unit-test switches: `CLICKHOUSED_REQUIRE_OPENSSL=1` turns "OpenSSL not found" from a skip into a failure; `CLICKHOUSED_TLS_PUBLIC_HOST=github.com:443` verifies a public server with the system trust store (needs the internet). CI sets both on every OS.
 - **ZSTD** is optional. The `zstd` dub configuration defines `version (ClickHousedZstd)` and links `libzstd`. Test it with:
   - `dub test -c zstd`;
   - `CLICKHOUSE_COMPRESSION=zstd dub run :integration-tests-phobos --override-config=clickhoused/zstd`.

@@ -50,6 +50,8 @@ final class TlsContext
     private const(OpenSslApi)* api;
     private SslCtx* ctx;
     private bool verifyPeer;
+    /// Certificates added from the Windows "ROOT" system store (Windows only).
+    package size_t windowsRootCertificates;
 
     private struct Key
     {
@@ -111,7 +113,12 @@ final class TlsContext
                 check(api.sslCtxLoadVerifyLocations(ctx, options.caFile.toStringz, null),
                         "Cannot load trusted certificates from " ~ options.caFile);
             else
+            {
                 check(api.sslCtxSetDefaultVerifyPaths(ctx), "Cannot load the system's trusted certificates");
+                // OpenSSL's defaults don't include the Windows certificate store
+                version (Windows)
+                    windowsRootCertificates = addWindowsRootCertificates(api, ctx);
+            }
             api.sslCtxSetVerify(ctx, server ? sslVerifyPeer | sslVerifyFailIfNoPeerCert : sslVerifyPeer, null);
         }
         else
@@ -627,6 +634,48 @@ final class TlsTransport : Transport
     }
 }
 
+version (Windows)
+{
+    import core.sys.windows.wincrypt : CertCloseStore, CertOpenSystemStoreW, HCERTSTORE, HCRYPTPROV,
+        PCCERT_CONTEXT, X509_ASN_ENCODING;
+
+    pragma(lib, "crypt32");
+
+    // Not declared in druntime's wincrypt module
+    private extern (Windows) PCCERT_CONTEXT CertEnumCertificatesInStore(HCERTSTORE store,
+            PCCERT_CONTEXT previous) nothrow @nogc;
+
+    /// Adds the certificates of the Windows "ROOT" system store to the trust store of `ctx`.
+    /// Returns: how many were added.
+    private size_t addWindowsRootCertificates(const(OpenSslApi)* api, SslCtx* ctx) @trusted nothrow
+    {
+        // The store and certificate contexts come from crypt32 and are used only while open;
+        // d2i_X509 reads exactly cbCertEncoded bytes of the DER-encoded certificate.
+        auto store = CertOpenSystemStoreW(HCRYPTPROV.init, "ROOT"w.ptr);
+        if (store is null)
+            return 0;
+        scope (exit)
+            CertCloseStore(store, 0);
+        auto trusted = api.sslCtxGetCertStore(ctx);
+        size_t added;
+        for (auto cert = CertEnumCertificatesInStore(store, null); cert !is null; cert = CertEnumCertificatesInStore(
+                store, cert))
+        {
+            if ((cert.dwCertEncodingType & X509_ASN_ENCODING) == 0)
+                continue;
+            const(ubyte)* der = cert.pbCertEncoded;
+            auto x509 = api.d2iX509(null, &der, cert.cbCertEncoded);
+            if (x509 is null)
+                continue;
+            if (api.x509StoreAddCert(trusted, x509) == 1)
+                added++;
+            api.x509Free(x509); // the store keeps its own reference
+        }
+        api.errClearError(); // e.g. duplicates or certificates OpenSSL cannot parse
+        return added;
+    }
+}
+
 /// The messages in this thread's OpenSSL error queue, which is emptied.
 private string errorQueueText(const(OpenSslApi)* api) @trusted nothrow
 {
@@ -700,9 +749,13 @@ version (unittest)
         import std.process : environment;
         import std.stdio : stderr;
 
+        static bool reported;
         try
         {
-            loadOpenSsl();
+            const ver = loadOpenSsl();
+            if (!reported)
+                stderr.writeln("clickhoused: TLS unit tests use ", ver, " (", openSslLibrary(), ")");
+            reported = true;
             return true;
         }
         catch (ClientException e)
@@ -1039,6 +1092,48 @@ unittest
     clientWriter.join();
     serverReader.join();
     assert(pair.client.readsThatSent > 0, "no read had to send a key update reply");
+}
+
+// On Windows, client contexts trust the certificates of the system store
+version (Windows) @safe unittest
+{
+    if (!haveOpenSsl())
+        return;
+    auto context = new TlsContext(TlsOptions.init, false);
+    assert(context.windowsRootCertificates > 0, "no certificates imported from the Windows ROOT store");
+}
+
+// The system trust store verifies a public server. Opt-in, as it needs the internet:
+// CI sets CLICKHOUSED_TLS_PUBLIC_HOST, e.g. to github.com:443
+unittest
+{
+    import std.algorithm.searching : findSplit;
+    import std.conv : to;
+    import std.process : environment;
+
+    const target = environment.get("CLICKHOUSED_TLS_PUBLIC_HOST", "");
+    if (target.length == 0 || !haveOpenSsl())
+        return;
+    auto hostPort = target.findSplit(":");
+    const host = hostPort[0];
+    const port = hostPort[2].length ? hostPort[2].to!ushort : cast(ushort) 443;
+    auto backend = new PhobosBackend;
+    auto raw = backend.connect(host, port, 10.seconds);
+    TlsOptions options; // the system's trusted certificates
+    auto tls = new TlsTransport(raw, backend, TlsContext.client(options), host, options, 10.seconds);
+    scope (exit)
+        tls.close();
+    assert(tls.protocolVersion.length > 0);
+
+    // The same server under a name its certificate doesn't cover is rejected
+    options.serverName = "wrong.example";
+    auto other = backend.connect(host, port, 10.seconds);
+    bool rejected;
+    try
+        new TlsTransport(other, backend, TlsContext.client(options), host, options, 10.seconds).close();
+    catch (ConnectionException e)
+        rejected = true;
+    assert(rejected, "a certificate for the wrong name was accepted");
 }
 
 // Contexts are cached per option set; a missing file is a ClientException

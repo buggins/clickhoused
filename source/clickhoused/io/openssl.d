@@ -186,6 +186,7 @@ private enum c_ulong minimumVersion = 0x1010_1000;
 private __gshared OpenSslApi loadedApi;
 private __gshared bool apiLoaded;
 private __gshared string loadedDescription;
+private __gshared string loadedFile;
 
 /++
 Loads OpenSSL now, instead of on the first secure connection.
@@ -208,17 +209,43 @@ string loadOpenSsl(string sslPath = null, string cryptoPath = null) @safe
 {
     if (sslPath.length && !cryptoPath.length)
         throw new ClientException("loadOpenSsl: give the libcrypto path together with the libssl path");
-    synchronized
+    string load() @safe
     {
         if (!isLoaded())
         {
             const(Candidate)[] candidates = defaultCandidates;
             if (sslPath.length)
                 candidates = [Candidate(cryptoPath, sslPath)];
-            string description;
-            setLoaded(loadFrom(candidates, description), description);
+            string description, file;
+            auto api = loadFrom(candidates, description, file);
+            setLoaded(api, description, file);
         }
         return loadedVersion();
+    }
+
+    return withLoaderLock(&load);
+}
+
+/++
+The libssl file that was loaded (as it was passed to the system loader), or
+`null` if OpenSSL has not been loaded yet. For diagnostics.
++/
+string openSslLibrary() @safe
+{
+    string file() @trusted
+    {
+        return apiLoaded ? loadedFile : null; // written once, under the loader lock held here
+    }
+
+    return withLoaderLock(&file);
+}
+
+/// Runs `action` under the lock that guards loading (one `synchronized` statement, one mutex).
+private string withLoaderLock(scope string delegate() @safe action) @safe
+{
+    synchronized
+    {
+        return action();
     }
 }
 
@@ -235,14 +262,15 @@ package const(OpenSslApi)* openSsl() @safe
 
 private bool isLoaded() @trusted nothrow
 {
-    return apiLoaded; // only called inside the synchronized block of loadOpenSsl
+    return apiLoaded; // only called under the loader lock
 }
 
-private void setLoaded(OpenSslApi api, string description) @trusted nothrow
+private void setLoaded(OpenSslApi api, string description, string file) @trusted nothrow
 {
-    // only called inside the synchronized block of loadOpenSsl
+    // only called under the loader lock
     loadedApi = api;
     loadedDescription = description;
+    loadedFile = file;
     apiLoaded = true;
 }
 
@@ -259,7 +287,7 @@ private const(OpenSslApi)* loadedApiPointer() @trusted nothrow
 }
 
 /// Tries each candidate in turn; returns the first fully bound one.
-private OpenSslApi loadFrom(scope const Candidate[] candidates, out string description) @safe
+private OpenSslApi loadFrom(scope const Candidate[] candidates, out string description, out string file) @safe
 {
     string errors;
     foreach (candidate; candidates)
@@ -272,6 +300,7 @@ private OpenSslApi loadFrom(scope const Candidate[] candidates, out string descr
             if (ver >= minimumVersion)
             {
                 description = (() @trusted => fromCString(api.versionText(0)))(); // OPENSSL_VERSION = 0
+                file = candidate.ssl;
                 return api;
             }
             errors ~= "\n  " ~ candidate.ssl ~ ": version " ~ hexVersion(ver) ~ " is older than 1.1.1";
@@ -425,10 +454,10 @@ private string hexVersion(c_ulong v) @safe pure
     import std.exception : collectExceptionMsg;
 
     // A missing library is reported with its name, and the default names are not tried
-    string description;
+    string description, file;
     const msg = collectExceptionMsg!ClientException(loadFrom([
         Candidate("/nonexistent/libcrypto-test.so", "/nonexistent/libssl-test.so")
-    ], description));
+    ], description, file));
     assert(msg.canFind("/nonexistent/libcrypto-test.so"), msg);
     assert(msg.canFind("loadOpenSsl"), msg);
 }

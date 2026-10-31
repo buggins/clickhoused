@@ -41,9 +41,12 @@ jobs:
       - name: Build library
         run: dub build
       - name: Unit tests
-        # The TLS unit tests skip when OpenSSL can't be loaded; on Linux it must load
+        # The TLS unit tests skip when OpenSSL can't be loaded; the runners have it
+        # (Linux: the system library, macOS: Homebrew, Windows: OpenSSL in PATH)
         env:
-          CLICKHOUSED_REQUIRE_OPENSSL: ${{ runner.os == 'Linux' && '1' || '' }}
+          CLICKHOUSED_REQUIRE_OPENSSL: 1
+          # Checks the system's trusted certificates against a public server
+          CLICKHOUSED_TLS_PUBLIC_HOST: github.com:443
         run: dub test
       - name: Integration tests (threads)
         run: dub run :integration-tests-phobos
