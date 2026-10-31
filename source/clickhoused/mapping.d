@@ -151,11 +151,18 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
         }
         else static if (is(U == enum))
         {
-            import clickhoused.types.misc : Enum16Column, Enum8Column;
+            import clickhoused.types.misc : Enum16Column, Enum8Column, NullableColumn;
             import clickhoused.types.string : StringColumn;
 
-            if (cast(Enum8Column) column !is null || cast(Enum16Column) column !is null
-                    || cast(StringColumn) column !is null)
+            import clickhoused.types.lowcardinality : LowCardinalityColumn;
+
+            Column labels = column; // the column that holds the labels, if any
+            if (auto lc = cast(LowCardinalityColumn) labels)
+                labels = lc.values;
+            if (auto n = cast(NullableColumn) labels)
+                labels = n.nested;
+            if (cast(Enum8Column) labels !is null || cast(Enum16Column) labels !is null
+                    || cast(StringColumn) labels !is null)
             {
                 const label = column.getString(row);
                 try

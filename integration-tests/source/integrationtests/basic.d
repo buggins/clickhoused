@@ -168,14 +168,14 @@ void testBusyConnection()
     conn.ping();
 }
 
-/// LowCardinality columns arrive as their plain type (low_cardinality_allow_in_native_format = 0).
+/// LowCardinality columns arrive dictionary-encoded and are usable as their plain type.
 void testLowCardinality()
 {
     auto conn = connectToServer();
     scope (exit)
         conn.close();
     auto block = conn.firstBlock("SELECT toLowCardinality('abc') AS lc");
-    enforce(block.columns[0].typeName == "String", "got " ~ block.columns[0].typeName);
+    enforce(block.columns[0].typeName == "LowCardinality(String)", "got " ~ block.columns[0].typeName);
     enforce(block.column!StringColumn("lc").data == ["abc"]);
 }
 

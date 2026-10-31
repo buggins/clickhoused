@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The project follows [Se
 - **`Array(T)`** for all supported element types, nested arrays and `Array(Nullable(T))` (#1). `ArrayColumn` keeps the offsets and the element column as on the wire; `getString` matches the server's `toString()`.
 - D arrays map to `Array` columns in struct mapping, `readValue`, `Inserter.addRow`/`addStruct` and `Connection.insert` (`long[]`, `string[][]`, `Nullable!int[]`, ...). Array text such as `[1, 2]` or `['a', NULL]` is accepted too.
 - `Column.getQuotedString`: a value as ClickHouse writes it inside an array.
+- **Native `LowCardinality(T)`** (#2), including `LowCardinality(Nullable(T))` and LowCardinality inside arrays: dictionary-encoded on the wire in both directions, decoded into a plain column of type `T` (`LowCardinalityColumn.values`). The client no longer sends `low_cardinality_allow_in_native_format=0`, which made the server convert such columns.
+- `Column.appendFrom` copies a value between columns of the same type; `Column.readStatePrefix`/`writeStatePrefix` handle per-column serialization state.
+
+### Changed
+- `LowCardinality(T)` columns now arrive with their real type name (`LowCardinality(String)`, not `String`) as a `LowCardinalityColumn`. `Block.column!StringColumn("name")` and the other typed accessors still work: for such a column they return the decoded values. Code that casts `block.columns[i]` directly to the plain column class needs `LowCardinalityColumn.values`.
 
 ## 0.2.0 — 2026-10-31
 

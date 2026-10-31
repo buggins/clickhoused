@@ -46,13 +46,22 @@ final class Block
     }
 
     /++
-    Returns the column named `name`, cast to the column class `C`.
+    Returns the column named `name`, cast to the column class `C`. For a
+    `LowCardinality(T)` column, `C` may also be the class of `T`: the decoded
+    values are returned (see `LowCardinalityColumn`).
 
     Throws: `ClientException` if there is no such column, or it is not a `C`.
     +/
     C column(C : Column = Column)(string name) @safe
     {
-        auto c = cast(C) columns[columnIndex(name)];
+        import clickhoused.types.lowcardinality : LowCardinalityColumn;
+
+        const index = columnIndex(name);
+        auto c = cast(C) columns[index];
+        // A LowCardinality(T) column is used like a T column
+        if (c is null)
+            if (auto lc = cast(LowCardinalityColumn) columns[index])
+                c = cast(C) lc.values;
         if (c is null)
             throw new ClientException(
                     "Column '" ~ name ~ "' of type " ~ columns[columnIndex(name)].typeName
@@ -110,8 +119,11 @@ Block readBlock(BufferedReader reader, ulong revision, string defaultTimezone = 
         if (revision >= Revision.withCustomSerialization && reader.readByte() != 0)
             throw new ProtocolException("Column '" ~ name ~ "': custom serialization is not supported");
         auto column = createColumn(name, typeName, defaultTimezone);
-        if (block.rows)
+        if (block.rows) // a block without rows has no column data at all
+        {
+            column.readStatePrefix(reader);
             column.readData(reader, block.rows);
+        }
         block.columns ~= column;
     }
     return block;
@@ -133,7 +145,10 @@ void writeBlock(BufferedWriter writer, Block block, ulong revision) @safe
         if (revision >= Revision.withCustomSerialization)
             writer.writeByte(0); // default serialization
         if (block.rows)
+        {
+            column.writeStatePrefix(writer);
             column.writeData(writer);
+        }
     }
 }
 

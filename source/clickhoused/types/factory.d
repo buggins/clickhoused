@@ -10,6 +10,7 @@ import clickhoused.exception : ClientException, ProtocolException;
 import clickhoused.types.array : ArrayColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.datetime;
+import clickhoused.types.lowcardinality : LowCardinalityColumn;
 import clickhoused.types.misc;
 import clickhoused.types.numeric;
 import clickhoused.types.parser : TypeArgKind, TypeNode, parseType;
@@ -126,7 +127,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         if (type.args.length != 1 || type.args[0].kind != TypeArgKind.type)
             throw invalid();
         const nestedType = type.args[0].type;
-        if (nestedType.name == "Nullable" || nestedType.name == "Array")
+        if (nestedType.name == "Nullable" || nestedType.name == "Array" || nestedType.name == "LowCardinality")
             throw invalid();
         auto nested = createColumn(name, nestedType.toString(), nestedType, defaultTimezone);
         return new NullableColumn(name, typeName, nested);
@@ -136,6 +137,22 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         const elementType = type.args[0].type;
         auto elements = createColumn(name, elementType.toString(), elementType, defaultTimezone);
         return new ArrayColumn(name, typeName, elements);
+    case "LowCardinality":
+        if (type.args.length != 1 || type.args[0].kind != TypeArgKind.type)
+            throw invalid();
+        const innerType = type.args[0].type;
+        if (innerType.name == "LowCardinality" || innerType.name == "Array")
+            throw invalid();
+        // The dictionary holds the inner type without Nullable: NULL is index 0
+        const keyType = innerType.name == "Nullable" ? innerType.args[0].type : innerType;
+        Column newKeys() @safe
+        {
+            return createColumn(name, keyType.toString(), keyType, defaultTimezone);
+        }
+
+        auto values = createColumn(name, innerType.toString(), innerType, defaultTimezone);
+        newKeys(); // fails now, not when the first block arrives, if the key type is unsupported
+        return new LowCardinalityColumn(name, typeName, values, &newKeys);
     case "Nothing":
         return new NothingColumn(name, typeName);
     default:
@@ -161,7 +178,9 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     assertThrown!ClientException(createColumn("x", "Array(Map(String, UInt8))"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(Array(UInt8))"));
     assertThrown!ProtocolException(createColumn("x", "Array(UInt8, UInt8)"));
-    assertThrown!ClientException(createColumn("x", "LowCardinality(String)"));
+    assert(cast(StringColumn)(cast(LowCardinalityColumn) createColumn("l", "LowCardinality(String)")).values !is null);
+    assertThrown!ProtocolException(createColumn("x", "LowCardinality(Array(UInt8))"));
+    assertThrown!ProtocolException(createColumn("x", "Nullable(LowCardinality(String))"));
     assertThrown!ProtocolException(createColumn("x", "FixedString(0)"));
     assertThrown!ProtocolException(createColumn("x", "DateTime64(10)"));
     assertThrown!ProtocolException(createColumn("x", "Enum8('a' = 200)"));
@@ -178,7 +197,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Int64", "Float64", "Bool", "String", "FixedString(2)", "Date", "Date32", "DateTime('UTC')",
         "DateTime64(3, 'UTC')", "UUID", "Enum8('a' = 1, 'b' = 2)", "Nullable(String)",
         "Nullable(Nothing)", "Array(Int64)", "Array(Nullable(String))", "Array(Array(Date))",
-        "Array(Nothing)",
+        "Array(Nothing)", "LowCardinality(String)", "LowCardinality(Nullable(String))",
+        "Array(LowCardinality(String))", "LowCardinality(FixedString(2))", "LowCardinality(Date)",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -187,6 +207,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     {
         auto c = createColumn("c", typeName);
         fill(c);
+        c.writeStatePrefix(w);
         c.writeData(w);
         written ~= c;
     }
@@ -196,6 +217,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     foreach (i, typeName; types)
     {
         auto c = createColumn("c", typeName);
+        c.readStatePrefix(r);
         c.readData(r, 2);
         foreach (row; 0 .. 2)
         {
@@ -219,6 +241,8 @@ version (unittest)
             fill(n.nested);
             n.nulls = [false, true];
         }
+        else if (auto lc = cast(LowCardinalityColumn) c)
+            fill(lc.values);
         else if (auto a = cast(ArrayColumn) c)
         {
             if (cast(NothingColumn) a.elements)

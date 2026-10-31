@@ -133,6 +133,29 @@ final class ArrayColumn : Column
         elements.truncate(length ? cast(size_t) offsets[$ - 1] : 0);
     }
 
+    override void appendFrom(const Column source, size_t row) @safe
+    {
+        auto other = sameKind!ArrayColumn(source);
+        const before = elements.length;
+        scope (failure)
+            elements.truncate(before);
+        foreach (i; other.rowStart(row) .. other.rowEnd(row))
+            elements.appendFrom(other.elements, i);
+        endRow();
+    }
+
+    /// Passes the call on to the elements: their prefix comes before the offsets.
+    override void readStatePrefix(BufferedReader reader) @safe
+    {
+        elements.readStatePrefix(reader);
+    }
+
+    /// ditto
+    override void writeStatePrefix(BufferedWriter writer) const @safe
+    {
+        elements.writeStatePrefix(writer);
+    }
+
     /// Appends an empty array.
     override void appendDefault() @safe
     {
