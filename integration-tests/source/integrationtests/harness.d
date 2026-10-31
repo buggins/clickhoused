@@ -16,6 +16,7 @@ import integrationtests.arrays;
 import integrationtests.basic;
 import integrationtests.compression;
 import integrationtests.concurrency;
+import integrationtests.decimal;
 import integrationtests.insert;
 import integrationtests.lowcardinality;
 import integrationtests.mapping;
@@ -87,6 +88,9 @@ immutable TestCase[] allTests = [
     TestCase("Int128/UInt128/Int256/UInt256: read", &testWideIntRead, true),
     TestCase("Int128/UInt128/Int256/UInt256: many rows", &testWideIntManyRows, true),
     TestCase("Int128/UInt128/Int256/UInt256: insert", &testWideIntInsert, true),
+    TestCase("Decimal: read", &testDecimalRead, true),
+    TestCase("Decimal: many rows", &testDecimalManyRows, true),
+    TestCase("Decimal: insert", &testDecimalInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

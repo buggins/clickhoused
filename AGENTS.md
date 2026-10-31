@@ -73,6 +73,7 @@ source/clickhoused/        library:
                            testserver.d (ScriptedServer: scripted mock server for unit tests, unittest builds only)
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn), array.d (ArrayColumn),
                            lowcardinality.d (LowCardinalityColumn), wideint.d (Int128…UInt256, WideIntColumn),
+                           decimal.d (Decimal, DecimalColumn),
                            numeric.d, string.d, datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
                            parser.d (type-name parser), package.d (imports all)
   compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
@@ -259,9 +260,9 @@ The first implementation supports **basic types only**:
 - `UUID`, `Enum8`/`Enum16`;
 - `Nullable(T)` of the types above.
 
-`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) are supported too. Everything else comes later (tracking issue #10):
+`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) and `Decimal` (#3) are supported too. Everything else comes later (tracking issue #10):
 - Tuple, Map;
-- Decimal, IPv4/IPv6;
+- IPv4/IPv6;
 - Geo types, Variant/Dynamic/JSON.
 
 These types are implemented (milestone M2). An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
@@ -277,6 +278,8 @@ Column conventions:
 - Every column also implements the appenders that mirror the getters: `appendLong`, `appendUlong`, `appendDouble`, `appendBool`, `appendString` (parses non-string types), `appendBytes`, `appendDate`, `appendSysTime`, `appendUUID`, `appendNull` (Nullable only), `appendDefault`, and `truncate`.
   - Conversions are range-checked, and a failed append must leave the column unchanged.
   - `appendString` for DateTime types parses the text in the column timezone.
+
+Decimal (#3): the server names every decimal `Decimal(P, S)` and prints it without trailing fractional zeros (`1.5`, `100`), unquoted inside arrays (same on 23.8 and 26.x). Text with more fractional digits than the scale is truncated towards zero, as the server does (`toDecimal32('1.555', 2)` = 1.55).
 
 Wide integers (#4): `WideInt!(bits, signed)` holds little-endian 64-bit words; no arithmetic (convert to `BigInt`, or `std.int128.Int128` when `haveStdInt128`, frontend 2.100+). The minimum frontend 2.097 has no `std.int128`/`core.int128`, so that interop is compiled only when available.
 
