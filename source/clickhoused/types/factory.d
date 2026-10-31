@@ -10,6 +10,7 @@ import clickhoused.exception : ClientException, ProtocolException;
 import clickhoused.types.array : ArrayColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.datetime;
+import clickhoused.types.decimal;
 import clickhoused.types.lowcardinality : LowCardinalityColumn;
 import clickhoused.types.misc;
 import clickhoused.types.numeric;
@@ -75,6 +76,43 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         return elements;
     }
 
+    // Decimal(P, S), or Decimal32(S) ... Decimal256(S) with the largest precision of the width
+    Column decimalColumn()
+    {
+        uint number(size_t i)
+        {
+            if (type.args[i].kind != TypeArgKind.number || type.args[i].number < 0 || type.args[i].number > 76)
+                throw invalid();
+            return cast(uint) type.args[i].number;
+        }
+
+        uint precision, scale;
+        if (type.name == "Decimal")
+        {
+            if (type.args.length != 2)
+                throw invalid();
+            precision = number(0);
+            scale = number(1);
+        }
+        else
+        {
+            if (type.args.length != 1)
+                throw invalid();
+            precision = type.name == "Decimal32" ? 9 : type.name == "Decimal64" ? 18 : type.name == "Decimal128" ? 38
+                : 76;
+            scale = number(0);
+        }
+        if (precision == 0 || scale > precision)
+            throw invalid();
+        if (precision <= 9)
+            return new Decimal32Column(name, typeName, precision, scale);
+        if (precision <= 18)
+            return new Decimal64Column(name, typeName, precision, scale);
+        if (precision <= 38)
+            return new Decimal128Column(name, typeName, precision, scale);
+        return new Decimal256Column(name, typeName, precision, scale);
+    }
+
     switch (type.name)
     {
     case "UInt8":
@@ -101,6 +139,12 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         return new Int256Column(name, typeName);
     case "UInt256":
         return new UInt256Column(name, typeName);
+    case "Decimal":
+    case "Decimal32":
+    case "Decimal64":
+    case "Decimal128":
+    case "Decimal256":
+        return decimalColumn();
     case "Float32":
         return new Float32Column(name, typeName);
     case "Float64":
@@ -190,6 +234,13 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     assert(cast(StringColumn)(cast(LowCardinalityColumn) createColumn("l", "LowCardinality(String)")).values !is null);
     assertThrown!ProtocolException(createColumn("x", "LowCardinality(Array(UInt8))"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(LowCardinality(String))"));
+    auto d = cast(Decimal128Column) createColumn("d", "Decimal(20, 3)");
+    assert(d.precision == 20 && d.scale == 3);
+    assert((cast(Decimal64Column) createColumn("d", "Decimal64(4)")).precision == 18);
+    assert(cast(Decimal256Column) createColumn("d", "Decimal256(0)") !is null);
+    assertThrown!ProtocolException(createColumn("x", "Decimal(5, 6)"));
+    assertThrown!ProtocolException(createColumn("x", "Decimal(77, 0)"));
+    assertThrown!ProtocolException(createColumn("x", "Decimal(10)"));
     assertThrown!ProtocolException(createColumn("x", "FixedString(0)"));
     assertThrown!ProtocolException(createColumn("x", "DateTime64(10)"));
     assertThrown!ProtocolException(createColumn("x", "Enum8('a' = 200)"));
@@ -209,6 +260,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Array(Nothing)", "LowCardinality(String)", "LowCardinality(Nullable(String))",
         "Array(LowCardinality(String))", "LowCardinality(FixedString(2))", "LowCardinality(Date)",
         "Int128", "UInt128", "Int256", "UInt256", "Array(Nullable(Int256))",
+        "Decimal(9, 2)", "Decimal(18, 0)", "Decimal(38, 10)", "Decimal(76, 76)",
+        "Nullable(Decimal(20, 3))",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -265,6 +318,17 @@ version (unittest)
         }
         else if (auto x = cast(Int64Column) c)
             x.data = [long.min, 42];
+        else if (auto x = cast(Decimal32Column) c)
+            x.data = [-999_999_999, 150];
+        else if (auto x = cast(Decimal64Column) c)
+            x.data = [long.min + 1, 0];
+        else if (auto x = cast(Decimal128Column) c)
+            x.data = [Int128.fromString("-99999999999999999999999999999999999999"), Int128(5)];
+        else if (auto x = cast(Decimal256Column) c)
+            x.data = [
+            Int256.fromString("1"),
+            Int256.fromString("-" ~ "9999999999999999999999999999999999999999999999999999999999999999999999999999")
+        ];
         else if (auto x = cast(Int128Column) c)
             x.data = [Int128.min, Int128(-1)];
         else if (auto x = cast(UInt128Column) c)

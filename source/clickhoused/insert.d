@@ -32,6 +32,7 @@ import clickhoused.connection : Connection, QueryStats;
 import clickhoused.exception : ClientException, ServerException;
 import clickhoused.protocol.codes : ServerPacket;
 import clickhoused.protocol.packets : readException, writeDataHeader;
+import clickhoused.types.decimal : Decimal, appendDecimalTo;
 import clickhoused.types.wideint : isWideInt, WideIntColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.factory : createColumn;
@@ -137,7 +138,7 @@ final class Inserter
     Accepted value types: integers, floating-point numbers, `bool`, strings,
     `const(ubyte)[]`, `std.datetime.Date`, `std.datetime.SysTime`, `std.uuid.UUID`,
     D enums (stored by member name), `Int128`/`UInt128`/`Int256`/`UInt256`,
-    `std.bigint.BigInt`, `null`, `std.typecons.Nullable`, and
+    `std.bigint.BigInt`, `Decimal`, `null`, `std.typecons.Nullable`, and
     dynamic arrays of these for `Array` columns (`[1, 2]`, `["a"]`, `[[1], []]`).
     Values are converted to the column types with range checks.
 
@@ -504,6 +505,11 @@ void appendValue(T)(Column column, T value) @safe
     }
     else static if (is(U == BigInt))
         column.appendString(value.toDecimalString());
+    else static if (is(U == Decimal))
+    {
+        if (!appendDecimalTo(column, value))
+            column.appendString(value.toString()); // other numeric columns parse the text
+    }
     else
         static assert(0, "Cannot insert values of type " ~ T.stringof);
 }

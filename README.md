@@ -163,6 +163,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 | `UInt8`…`UInt64`, `Int8`…`Int64` | `UInt8Column`…`Int64Column` | `ubyte`…`long` |
 | `Int128`, `UInt128`, `Int256`, `UInt256` | `Int128Column`…`UInt256Column` | `Int128`…`UInt256` (exact; convert to `BigInt` for arithmetic), or `std.bigint.BigInt` |
 | `Float32`, `Float64` | `Float32Column`, `Float64Column` | `float`, `double` |
+| `Decimal(P, S)`, `Decimal32(S)`…`Decimal256(S)` | `Decimal32Column`…`Decimal256Column` | `Decimal` (exact), `string`, `double` |
 | `Bool` | `BoolColumn` | `bool` |
 | `String`, `FixedString(N)` | `StringColumn`, `FixedStringColumn` | `string`, `ubyte[]` |
 | `Date`, `Date32` | `DateColumn`, `Date32Column` | `Date` |
@@ -176,7 +177,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 ## Limitations
 
 - TLS needs the system's OpenSSL; on macOS that is Homebrew's (the built-in LibreSSL is not used).
-- Not supported yet: `Tuple`, `Map`, `Decimal`, `IPv4`/`IPv6`, geo types, `Variant`/`Dynamic`/`JSON`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
+- Not supported yet: `Tuple`, `Map`, `IPv4`/`IPv6`, geo types, `Variant`/`Dynamic`/`JSON`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
 - On Windows, timezone names fall back to UTC (no system timezone database). The point in time stays correct.
 
 ## Building and testing

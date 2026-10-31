@@ -42,6 +42,7 @@ import clickhoused.block : Block;
 import clickhoused.connection : QueryResult, QueryStats;
 import clickhoused.exception : ClientException;
 import clickhoused.types.column : Column;
+import clickhoused.types.decimal : Decimal, decimalAt;
 import clickhoused.types.wideint : isWideInt, WideIntColumn;
 
 /// The value of a `@column("name")` attribute.
@@ -95,7 +96,7 @@ template columnNames(T) if (is(T == struct))
 /++
 Whether values of type `T` can be read from and written to columns: numbers,
 `Int128`, `UInt128`, `Int256`, `UInt256`, `std.bigint.BigInt` (any integer
-column), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
+column), `Decimal` (any numeric column), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
 `std.typecons.Nullable` of these, and dynamic arrays of mappable values
 (for `Array` columns; `ubyte[]` stays the type for `String` bytes).
 +/
@@ -109,7 +110,7 @@ template isMappableValue(T)
     else
         enum isMappableValue = isIntegral!U || isFloatingPoint!U || is(U == bool) || is(U == string)
             || is(U == ubyte[]) || is(U == immutable(ubyte)[]) || is(U == Date) || is(U == SysTime) || is(U == UUID)
-            || is(U == enum) || isWideInt!U || is(U == BigInt);
+            || is(U == enum) || isWideInt!U || is(U == BigInt) || is(U == Decimal);
 }
 
 /// Whether `T` is a D array that maps to an `Array` column (strings and `ubyte[]` don't).
@@ -192,6 +193,19 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
                 throw new ClientException(
                         "Value of column '" ~ column.name ~ "' (" ~ column.typeName
                         ~ ") does not fit in " ~ U.stringof);
+        }
+        else static if (is(U == Decimal))
+        {
+            Decimal value;
+            if (decimalAt(column, row, value))
+                return value;
+            // Other numeric columns: exact through the decimal text
+            try
+                return Decimal.fromString(column.getString(row));
+            catch (ClientException)
+                throw new ClientException(
+                        "Value of column '" ~ column.name ~ "' (" ~ column.typeName
+                        ~ ") is not a decimal number");
         }
         else static if (is(U == BigInt))
         {
@@ -525,4 +539,38 @@ private string columnList(Block block) @safe
     appendValue(nullable, Nullable!Int256.init);
     assert(readValue!(Nullable!Int256)(nullable, 0).get == Int256.max);
     assert(readValue!(Nullable!Int256)(nullable, 1).isNull);
+}
+
+// Decimal values to and from columns
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.decimal : Decimal;
+    import clickhoused.types.factory : createColumn;
+
+    auto c = createColumn("p", "Decimal(9, 2)");
+    appendValue(c, Decimal.fromString("1.239")); // truncated to the scale
+    appendValue(c, "-0.5");
+    appendValue(c, 3.25);
+    appendValue(c, 7);
+    assert(readValue!Decimal(c, 0) == Decimal.fromString("1.23") && readValue!Decimal(c, 0).scale == 2);
+    assert(readValue!string(c, 1) == "-0.5" && readValue!double(c, 2) == 3.25 && readValue!long(c, 3) == 7);
+    assertThrown!ClientException(appendValue(c, Decimal.fromString("12345678.9")));
+    assert(c.length == 4);
+
+    // Decimals from and to other numeric columns
+    auto f = createColumn("f", "Float64");
+    appendValue(f, Decimal.fromString("2.5"));
+    assert(readValue!Decimal(f, 0) == Decimal.fromString("2.5"));
+    auto i = createColumn("i", "Int32");
+    appendValue(i, Decimal.fromString("42.00"));
+    assertThrown!ClientException(appendValue(i, Decimal.fromString("4.2")));
+    assert(readValue!Decimal(i, 0) == Decimal.fromString("42"));
+
+    auto n = createColumn("n", "Nullable(Decimal(38, 5))");
+    appendValue(n, Nullable!Decimal.init);
+    appendValue(n, Nullable!Decimal(Decimal.fromString("-1.00001")));
+    assert(readValue!(Nullable!Decimal)(n, 0).isNull);
+    assert(readValue!(Nullable!Decimal)(n, 1).get.toString() == "-1.00001");
 }
