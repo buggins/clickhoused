@@ -11,6 +11,7 @@ import clickhoused.types.array : ArrayColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.datetime;
 import clickhoused.types.decimal;
+import clickhoused.types.ip : IPv4, IPv4Column, IPv6, IPv6Column;
 import clickhoused.types.lowcardinality : LowCardinalityColumn;
 import clickhoused.types.misc;
 import clickhoused.types.numeric;
@@ -172,6 +173,10 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         return new DateTime64Column(name, cast(uint) type.args[0].number, typeName, timezoneArg(1));
     case "UUID":
         return new UUIDColumn(name, typeName);
+    case "IPv4":
+        return new IPv4Column(name, typeName);
+    case "IPv6":
+        return new IPv6Column(name, typeName);
     case "Enum8":
         return new Enum8Column(name, typeName, enumElements!byte());
     case "Enum16":
@@ -261,7 +266,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Array(LowCardinality(String))", "LowCardinality(FixedString(2))", "LowCardinality(Date)",
         "Int128", "UInt128", "Int256", "UInt256", "Array(Nullable(Int256))",
         "Decimal(9, 2)", "Decimal(18, 0)", "Decimal(38, 10)", "Decimal(76, 76)",
-        "Nullable(Decimal(20, 3))",
+        "Nullable(Decimal(20, 3))", "IPv4", "IPv6", "Array(Nullable(IPv6))",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -318,6 +323,10 @@ version (unittest)
         }
         else if (auto x = cast(Int64Column) c)
             x.data = [long.min, 42];
+        else if (auto x = cast(IPv4Column) c)
+            x.data = [0x0102_0304, uint.max];
+        else if (auto x = cast(IPv6Column) c)
+            x.data = [IPv6.fromString("2001:db8::7"), IPv6.fromString("1.2.3.4")];
         else if (auto x = cast(Decimal32Column) c)
             x.data = [-999_999_999, 150];
         else if (auto x = cast(Decimal64Column) c)

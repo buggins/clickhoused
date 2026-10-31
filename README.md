@@ -169,6 +169,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 | `Date`, `Date32` | `DateColumn`, `Date32Column` | `Date` |
 | `DateTime[(tz)]`, `DateTime64(p[, tz])` | `DateTimeColumn`, `DateTime64Column` | `SysTime` |
 | `UUID` | `UUIDColumn` | `UUID` |
+| `IPv4`, `IPv6` | `IPv4Column`, `IPv6Column` | `IPv4`, `IPv6` (also `string`; `uint` for IPv4) |
 | `Enum8`, `Enum16` | `Enum8Column`, `Enum16Column` | label `string`, or a D `enum` |
 | `Nullable(T)` | `NullableColumn` | `Nullable!T` |
 | `Array(T)`, nested too | `ArrayColumn` | `T[]` (e.g. `long[]`, `string[][]`, `Nullable!int[]`) |
@@ -177,7 +178,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 ## Limitations
 
 - TLS needs the system's OpenSSL; on macOS that is Homebrew's (the built-in LibreSSL is not used).
-- Not supported yet: `Tuple`, `Map`, `IPv4`/`IPv6`, geo types, `Variant`/`Dynamic`/`JSON`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
+- Not supported yet: `Tuple`, `Map`, geo types, `Variant`/`Dynamic`/`JSON`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
 - On Windows, timezone names fall back to UTC (no system timezone database). The point in time stays correct.
 
 ## Building and testing
