@@ -3,7 +3,8 @@ Basic clickhoused usage: connect, create a table, insert structs, query them
 back, aggregate, and read a result block by block.
 
 Run with `dub run :example-basic`. The server address comes from the
-`CLICKHOUSE_DSN` environment variable (default `clickhouse://localhost`).
+`CLICKHOUSE_DSN` environment variable (default `clickhouse://localhost`); add
+`?secure=true` to connect over TLS.
 +/
 module app;
 
@@ -33,6 +34,8 @@ void main()
         conn.close();
     writefln("Connected to %s %s.%s on %s", conn.serverInfo.name, conn.serverInfo.versionMajor,
             conn.serverInfo.versionMinor, conn.host);
+    if (conn.tlsVersion.length) // with secure=true in the DSN
+        writeln("Encrypted with ", conn.tlsVersion);
 
     // A temporary table lives as long as the connection
     conn.exec(`CREATE TEMPORARY TABLE example_trades (ts DateTime64(3, 'UTC'), symbol String,

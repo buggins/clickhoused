@@ -2,12 +2,14 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
-## Unreleased
+## 0.2.0 — 2026-10-31
 
 ### Added
 - **TLS** in thread and fiber mode: `ConnectionOptions.secure` and `tls` (`TlsOptions`), or `secure=true` in the connection string, with `skip_verify`, `tls_ca_file`, `tls_cert_file`, `tls_key_file` and `tls_server_name`. The server certificate and host name are verified by default (TLS 1.2 or newer); client certificates allow certificate-based login.
-- OpenSSL 1.1.1 or 3.x is loaded at run time when the first secure connection is made, so builds without TLS don't need it. `loadOpenSsl` loads it early or from specific files.
+- OpenSSL 1.1.1 or 3.x is loaded at run time when the first secure connection is made, so builds without TLS don't need it and `dub.json` needs no change. `loadOpenSsl` loads it early or from specific files; `openSslLibrary` tells which file was loaded.
+- Trusted certificates come from the system: OpenSSL's default store, plus the Windows certificate store on Windows. macOS needs Homebrew's `openssl@3`.
 - `Connection.tlsVersion`.
+- CI runs the whole integration suite over TLS against every tested ClickHouse version (23.8 to latest), in thread and fiber mode.
 
 ### Changed
 - `ConnectionOptions.port` and `HostPort.port` default to 0, meaning 9000, or 9440 with TLS. A connection string without a port gives 0 too. `Connection.host` reports the port actually used.
