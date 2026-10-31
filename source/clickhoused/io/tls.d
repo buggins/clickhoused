@@ -639,7 +639,8 @@ version (Windows)
     import core.sys.windows.wincrypt : CertCloseStore, CertOpenSystemStoreW, HCERTSTORE, HCRYPTPROV,
         PCCERT_CONTEXT, X509_ASN_ENCODING;
 
-    pragma(lib, "crypt32");
+    // crypt32 is linked through "libs-windows" in dub.json: a pragma(lib) in a static
+    // library does not reach the final link with every compiler.
 
     // Not declared in druntime's wincrypt module
     private extern (Windows) PCCERT_CONTEXT CertEnumCertificatesInStore(HCERTSTORE store,
