@@ -24,6 +24,7 @@ import integrationtests.server : serverConfigured, tlsConfigured;
 import integrationtests.smoke;
 import integrationtests.tls;
 import integrationtests.types;
+import integrationtests.wideint;
 
 /// Integration test entry point. Throws on failure.
 alias TestFunction = void function();
@@ -83,6 +84,9 @@ immutable TestCase[] allTests = [
     TestCase("LowCardinality: read", &testLowCardinalityRead, true),
     TestCase("LowCardinality: many rows", &testLowCardinalityManyRows, true),
     TestCase("LowCardinality: insert", &testLowCardinalityInsert, true),
+    TestCase("Int128/UInt128/Int256/UInt256: read", &testWideIntRead, true),
+    TestCase("Int128/UInt128/Int256/UInt256: many rows", &testWideIntManyRows, true),
+    TestCase("Int128/UInt128/Int256/UInt256: insert", &testWideIntInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

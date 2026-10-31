@@ -15,6 +15,7 @@ import clickhoused.types.misc;
 import clickhoused.types.numeric;
 import clickhoused.types.parser : TypeArgKind, TypeNode, parseType;
 import clickhoused.types.string;
+import clickhoused.types.wideint;
 
 /++
 Creates an empty column for the ClickHouse type `typeName`.
@@ -92,6 +93,14 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         return new Int32Column(name, typeName);
     case "Int64":
         return new Int64Column(name, typeName);
+    case "Int128":
+        return new Int128Column(name, typeName);
+    case "UInt128":
+        return new UInt128Column(name, typeName);
+    case "Int256":
+        return new Int256Column(name, typeName);
+    case "UInt256":
+        return new UInt256Column(name, typeName);
     case "Float32":
         return new Float32Column(name, typeName);
     case "Float64":
@@ -199,6 +208,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Nullable(Nothing)", "Array(Int64)", "Array(Nullable(String))", "Array(Array(Date))",
         "Array(Nothing)", "LowCardinality(String)", "LowCardinality(Nullable(String))",
         "Array(LowCardinality(String))", "LowCardinality(FixedString(2))", "LowCardinality(Date)",
+        "Int128", "UInt128", "Int256", "UInt256", "Array(Nullable(Int256))",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -255,6 +265,14 @@ version (unittest)
         }
         else if (auto x = cast(Int64Column) c)
             x.data = [long.min, 42];
+        else if (auto x = cast(Int128Column) c)
+            x.data = [Int128.min, Int128(-1)];
+        else if (auto x = cast(UInt128Column) c)
+            x.data = [UInt128.max, UInt128(0)];
+        else if (auto x = cast(Int256Column) c)
+            x.data = [Int256.min, Int256.max];
+        else if (auto x = cast(UInt256Column) c)
+            x.data = [UInt256.max, UInt256(7)];
         else if (auto x = cast(Float64Column) c)
             x.data = [-0.5, 1e300];
         else if (auto x = cast(BoolColumn) c)

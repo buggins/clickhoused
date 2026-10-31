@@ -30,6 +30,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.mapping;
 
+import std.bigint : BigInt;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
 import std.meta : AliasSeq;
@@ -41,6 +42,7 @@ import clickhoused.block : Block;
 import clickhoused.connection : QueryResult, QueryStats;
 import clickhoused.exception : ClientException;
 import clickhoused.types.column : Column;
+import clickhoused.types.wideint : isWideInt, WideIntColumn;
 
 /// The value of a `@column("name")` attribute.
 struct ColumnName
@@ -92,7 +94,8 @@ template columnNames(T) if (is(T == struct))
 
 /++
 Whether values of type `T` can be read from and written to columns: numbers,
-`bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
+`Int128`, `UInt128`, `Int256`, `UInt256`, `std.bigint.BigInt` (any integer
+column), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
 `std.typecons.Nullable` of these, and dynamic arrays of mappable values
 (for `Array` columns; `ubyte[]` stays the type for `String` bytes).
 +/
@@ -106,7 +109,7 @@ template isMappableValue(T)
     else
         enum isMappableValue = isIntegral!U || isFloatingPoint!U || is(U == bool) || is(U == string)
             || is(U == ubyte[]) || is(U == immutable(ubyte)[]) || is(U == Date) || is(U == SysTime) || is(U == UUID)
-            || is(U == enum);
+            || is(U == enum) || isWideInt!U || is(U == BigInt);
 }
 
 /// Whether `T` is a D array that maps to an `Array` column (strings and `ubyte[]` don't).
@@ -177,6 +180,29 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
                 if (__traits(getMember, U, member) == value)
                     return __traits(getMember, U, member);
             throw new ClientException("Value of column '" ~ column.name ~ "' is not a member of " ~ U.stringof);
+        }
+        else static if (isWideInt!U)
+        {
+            if (auto wide = cast(WideIntColumn!U) column)
+                return wide.data[row];
+            // Other integer columns: exact through the decimal text, with a range check
+            try
+                return U.fromString(column.getString(row));
+            catch (ClientException)
+                throw new ClientException(
+                        "Value of column '" ~ column.name ~ "' (" ~ column.typeName
+                        ~ ") does not fit in " ~ U.stringof);
+        }
+        else static if (is(U == BigInt))
+        {
+            import std.conv : ConvException;
+
+            try
+                return BigInt(column.getString(row));
+            catch (ConvException)
+                throw new ClientException(
+                        "Value of column '" ~ column.name ~ "' (" ~ column.typeName
+                        ~ ") is not an integer");
         }
         else static if (is(U == bool))
             return column.getBool(row);
@@ -466,4 +492,37 @@ private string columnList(Block block) @safe
     assertThrown!ClientException(appendValue(plain, [1, 2]));
     appendValue(plain, "x");
     assertThrown!ClientException(readValue!(int[])(plain, 0));
+}
+
+// 128/256-bit integers and BigInt to and from columns
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.factory : createColumn;
+    import clickhoused.types.wideint : Int128, Int256, UInt128;
+
+    auto c = createColumn("i", "Int128");
+    appendValue(c, Int128.min);
+    appendValue(c, BigInt("-42"));
+    appendValue(c, 7);
+    assert(readValue!Int128(c, 0) == Int128.min);
+    assert(readValue!BigInt(c, 0) == BigInt("-170141183460469231731687303715884105728"));
+    assert(readValue!Int256(c, 1) == Int256(-42) && readValue!long(c, 2) == 7);
+    assertThrown!ClientException(readValue!UInt128(c, 1)); // negative
+    assertThrown!ClientException(readValue!long(c, 0)); // too big
+    assertThrown!ClientException(appendValue(c, BigInt(1) << 127)); // out of range
+    assert(c.length == 3);
+
+    // Other integer columns read into and from the wide types
+    auto u64 = createColumn("u", "UInt64");
+    appendValue(u64, UInt128(ulong.max));
+    assert(readValue!UInt128(u64, 0) == UInt128(ulong.max) && readValue!BigInt(u64, 0) == BigInt(ulong.max));
+    assertThrown!ClientException(appendValue(u64, UInt128.max));
+
+    auto nullable = createColumn("n", "Nullable(Int256)");
+    appendValue(nullable, Nullable!Int256(Int256.max));
+    appendValue(nullable, Nullable!Int256.init);
+    assert(readValue!(Nullable!Int256)(nullable, 0).get == Int256.max);
+    assert(readValue!(Nullable!Int256)(nullable, 1).isNull);
 }

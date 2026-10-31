@@ -24,3 +24,4 @@ public import clickhoused.types.misc;
 public import clickhoused.types.numeric;
 public import clickhoused.types.parser;
 public import clickhoused.types.string;
+public import clickhoused.types.wideint;
