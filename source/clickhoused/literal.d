@@ -18,6 +18,7 @@ import std.typecons : isTuple, Nullable;
 import std.uuid : UUID;
 
 import clickhoused.types.decimal : Decimal;
+import clickhoused.types.geo : GeoPoint;
 import clickhoused.types.ip : IPv4, IPv6;
 import clickhoused.types.wideint : Int128, UInt256, isWideInt;
 
@@ -33,7 +34,8 @@ $(UL
         `std.bigint.BigInt` as `toInt256('…')`: ClickHouse would read a plain literal
         beyond 64 bits as `Float64`;)
     $(LI `Decimal` as `toDecimal256('…', scale)`, exact; `IPv4`/`IPv6` as `toIPv4('…')`/`toIPv6('…')`;)
-    $(LI `std.typecons.Tuple` as `tuple(…)`; associative arrays as `map(key, value, …)`;)
+    $(LI `std.typecons.Tuple` as `tuple(…)`; associative arrays as `map(key, value, …)`;
+        `GeoPoint` as `CAST((x, y) AS Point)`;)
     $(LI `null` and empty `Nullable` as `NULL`; other arrays as `[…]`.)
 )
 +/
@@ -99,6 +101,8 @@ string formatLiteral(T)(auto ref const T value) @safe
         }
         return s ~ ")";
     }
+    else static if (is(U == GeoPoint))
+        return "CAST((" ~ formatLiteral(value.x) ~ ", " ~ formatLiteral(value.y) ~ ") AS Point)";
     else static if (isTuple!U)
     {
         string s = "tuple(";
@@ -159,6 +163,8 @@ string formatLiteral(T)(auto ref const T value) @safe
     assert(formatLiteral(IPv6.fromString("::1")) == "toIPv6('::1')" && formatLiteral(IPv4(1)) == "toIPv4('0.0.0.1')");
     assert(formatLiteral(tuple(1, "a", [2])) == "tuple(1, 'a', [2])");
     assert(formatLiteral(["k": 1]) == "map('k', 1)" && formatLiteral(cast(int[string]) null) == "map()");
+    assert(formatLiteral(GeoPoint(1.5, -2)) == "CAST((1.5, -2) AS Point)");
+    assert(formatLiteral([GeoPoint(0, 0)]) == "[CAST((0, 0) AS Point)]");
     assert(formatLiteral(BigInt("-12345678901234567890123")) == "toInt256('-12345678901234567890123')");
     assert(formatLiteral(SysTime(DateTime(2025, 10, 29, 12, 34, 56), UTC()) + 789.msecs)
             == "toDateTime64('2025-10-29 12:34:56.7890000', 7, 'UTC')");

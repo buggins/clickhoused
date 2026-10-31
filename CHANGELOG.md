@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
+## Unreleased
+
+### Added
+- **Geo types** (#19): `Point`, `Ring`, `LineString`, `MultiLineString`, `Polygon` and `MultiPolygon` are read and written as the Tuple and Array columns they are aliases of, keeping their type names. The `GeoPoint` value type maps to `Point`; arrays of it to the other geo types. `formatLiteral` writes `GeoPoint` as `CAST((x, y) AS Point)`.
+
 ## 0.3.0 — 2026-10-31
 
 Composite and extended column types (tracking issue #10).

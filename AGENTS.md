@@ -74,7 +74,7 @@ source/clickhoused/        library:
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn), array.d (ArrayColumn),
                            lowcardinality.d (LowCardinalityColumn), wideint.d (Int128…UInt256, WideIntColumn),
                            decimal.d (Decimal, DecimalColumn), ip.d (IPv4, IPv6 and their columns),
-                           tuple.d (TupleColumn), map.d (MapColumn), textlist.d (parsing [..], (..) and {k:v}
+                           tuple.d (TupleColumn), map.d (MapColumn), geo.d (GeoPoint, geo type aliases), textlist.d (parsing [..], (..) and {k:v}
                            text for appendString),
                            numeric.d, string.d, datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
                            parser.d (type-name parser), package.d (imports all)
@@ -278,6 +278,8 @@ Column conventions:
 - Every column also implements the appenders that mirror the getters: `appendLong`, `appendUlong`, `appendDouble`, `appendBool`, `appendString` (parses non-string types), `appendBytes`, `appendDate`, `appendSysTime`, `appendUUID`, `appendNull` (Nullable only), `appendDefault`, and `truncate`.
   - Conversions are range-checked, and a failed append must leave the column unchanged.
   - `appendString` for DateTime types parses the text in the column timezone.
+
+Geo types (#19): named aliases (`Point` = `Tuple(Float64, Float64)`, `Ring`/`LineString` = `Array(Point)`, `Polygon` = `Array(Ring)`, `MultiLineString` = `Array(LineString)`, `MultiPolygon` = `Array(Polygon)`); the server sends the alias names and the underlying wire format. 23.8 has Point, Ring, Polygon, MultiPolygon only; LineString/MultiLineString and `Geometry` (a Variant, #9) are newer.
 
 Map (#7): on the wire exactly `Array(Tuple(K, V))` (same bytes on 23.8 and 26.11; the newer MergeTree map serialization versions don't affect the native protocol), so `MapColumn` wraps an `ArrayColumn` of a `TupleColumn`; a LowCardinality key's prefix comes before the offsets. Text `{'a':1}`; maps keep order and may repeat keys.
 
