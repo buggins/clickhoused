@@ -221,3 +221,14 @@ The column append methods write into a spare buffer each column keeps (`appendFa
 | decode/wide 24 columns | 60.4–80.5 | 39.9–42.1 | 1.4–2.0x | 253 → 379 |
 
 Inserting row by row now runs at about 20 million rows/s (whole blocks: about 50 million). Other cases are unchanged within noise; cases that looked slower in the first pass (`frame/decode lz4`, whose code did not change, `encode/LowCardinality`, `readValue`, `Map`, `Tuple`) came out equal or faster in alternating runs. Allocation figures for decoded LowCardinality columns rise because their values now grow in a doubling spare buffer, counted by the GC counter, where they used to be extended in place, which it doesn't count.
+
+### Struct mapping and timezones (#48)
+
+`query!T` reads each field whose column has exactly the matching type (`long` and `Int64`, `string` and `String`, `SysTime` and `DateTime64`/`DateTime`, ...) straight from the column array; other fields still go through `readValue`. `resolveTimeZone` remembers its last lookup per thread and checks the name by identity first, since a column passes the same string for every cell. Three alternating rounds, min times in ms (before: `main` with #46):
+
+| case | before ms | after ms | speed-up |
+|---|---:|---:|---:|
+| query/query!T structs | 180.9–247.4 | 64.8–87.3 | 2.8–3.2x |
+| cells/getSysTime DateTime64(3, Europe/Lisbon) (new case) | 21.7–26.8 | 13.1–13.6 | 1.7–2.0x |
+
+`query!T` now runs at about 12–15 million rows/s (reading the same columns directly: about 40 million). Columns with a timezone other than UTC used to pay a hash lookup per cell; UTC columns were already fast.

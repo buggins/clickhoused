@@ -395,6 +395,7 @@ struct RowRange(T) if (is(T == struct))
     private QueryResult result_;
     private Block block;
     private Column[] bound; // the column of each mapped field
+    private FastFields!T fast; // typed access to the columns that match their fields exactly
     private size_t row;
     private T current;
     private bool loaded;
@@ -457,7 +458,10 @@ struct RowRange(T) if (is(T == struct))
             }
             block = result_.front;
             try
+            {
                 bound = bindColumns!T(block);
+                bindFast!T(fast, bound);
+            }
             catch (ClientException e)
             {
                 result_.close(); // free the connection: the rest of the result is useless
@@ -466,7 +470,7 @@ struct RowRange(T) if (is(T == struct))
             }
             row = 0;
         }
-        current = readStruct!T(bound, row);
+        current = readStruct!T(bound, fast, row);
         loaded = true;
     }
 }
@@ -498,18 +502,143 @@ package Column[] bindColumns(T)(Block block) @safe
 /// Builds a `T` from `row` of the columns returned by `bindColumns`.
 package T readStruct(T)(Column[] bound, size_t row)
 {
+    FastFields!T fast;
+    return readStruct!T(bound, fast, row);
+}
+
+/// ditto, taking the fields that `fast` has a typed column for straight from it.
+package T readStruct(T)(Column[] bound, ref FastFields!T fast, size_t row)
+{
     T value;
-    size_t k;
-    static foreach (i; 0 .. T.tupleof.length)
+    static foreach (k, i; mappedFields!T)
     {
-        static if (!hasUDA!(T.tupleof[i], IgnoreField))
-        {
-            static assert(isMappableValue!(typeof(T.tupleof[i])), T.stringof ~ "." ~ __traits(identifier,
-                    T.tupleof[i]) ~ ": fields of type " ~ typeof(T.tupleof[i]).stringof ~ " cannot be mapped");
-            setField(value.tupleof[i], readValue!(typeof(T.tupleof[i]))(bound[k++], row));
-        }
+        static assert(isMappableValue!(typeof(T.tupleof[i])), T.stringof ~ "." ~ __traits(identifier,
+                T.tupleof[i]) ~ ": fields of type " ~ typeof(T.tupleof[i]).stringof ~ " cannot be mapped");
+        if (!fast[k].read(row, value.tupleof[i]))
+            setField(value.tupleof[i], readValue!(typeof(T.tupleof[i]))(bound[k], row));
     }
     return value;
+}
+
+/++
+Typed access to the column of a field of type `F`, when the column has
+exactly the matching type (`long` and `Int64`, `string` and `String`,
+`SysTime` and `DateTime64`, ...): values are read from its array without the
+checks and conversions of `readValue`.
++/
+package struct FastField(F)
+{
+    import clickhoused.types.datetime : Date32Column, DateColumn, DateTime64Column, DateTimeColumn;
+    import clickhoused.types.misc : UUIDColumn;
+    import clickhoused.types.numeric : BoolColumn, NumericColumn;
+    import clickhoused.types.string : StringColumn;
+
+    private alias U = Unqual!F;
+    static if (isIntegral!U || isFloatingPoint!U)
+    {
+        private NumericColumn!U column;
+
+        bool bind(Column c) @safe pure nothrow
+        {
+            column = cast(NumericColumn!U) c;
+            return column !is null;
+        }
+
+        bool read(size_t row, ref F target) @safe
+        {
+            if (column is null)
+                return false;
+            target = column.data[row];
+            return true;
+        }
+    }
+    else static if (is(U == bool) || is(U == string) || is(U == UUID))
+    {
+        static if (is(U == bool))
+            private BoolColumn column;
+        else static if (is(U == string))
+            private StringColumn column;
+        else
+            private UUIDColumn column;
+
+        bool bind(Column c) @safe pure nothrow
+        {
+            column = cast(typeof(column)) c;
+            return column !is null;
+        }
+
+        bool read(size_t row, ref F target) @safe
+        {
+            if (column is null)
+                return false;
+            target = column.data[row];
+            return true;
+        }
+    }
+    else static if (is(U == SysTime) || is(U == Date))
+    {
+        static if (is(U == SysTime))
+        {
+            private DateTime64Column wide;
+            private DateTimeColumn narrow;
+        }
+        else
+        {
+            private Date32Column wide;
+            private DateColumn narrow;
+        }
+
+        bool bind(Column c) @safe pure nothrow
+        {
+            wide = cast(typeof(wide)) c;
+            narrow = cast(typeof(narrow)) c;
+            return wide !is null || narrow !is null;
+        }
+
+        bool read(size_t row, ref F target) @safe
+        {
+            if (wide !is null)
+                target = wide[row];
+            else if (narrow !is null)
+                target = narrow[row];
+            else
+                return false;
+            return true;
+        }
+    }
+    else
+    {
+        bool bind(Column) @safe pure nothrow
+        {
+            return false;
+        }
+
+        bool read(size_t, ref F) @safe pure nothrow
+        {
+            return false;
+        }
+    }
+}
+
+/// A `FastField` for each mapped field of `T`.
+package template FastFields(T)
+{
+    import std.meta : staticMap;
+    import std.typecons : Tuple;
+
+    private template FieldType(size_t i)
+    {
+        alias FieldType = FastField!(typeof(T.tupleof[i]));
+    }
+
+    alias FastFields = Tuple!(staticMap!(FieldType, mappedFields!T));
+}
+
+/// Binds the typed columns of `fast` to `bound` (the columns of a block, from `bindColumns`).
+package void bindFast(T)(ref FastFields!T fast, Column[] bound) @safe
+{
+    static foreach (k; 0 .. mappedFields!T.length)
+        fast[k].bind(bound[k]);
 }
 
 /// Indices of the mapped (non-ignored) fields of `T`.
@@ -991,4 +1120,86 @@ private string columnList(Block block) @safe
     auto d = cast(DynamicColumn) createColumn("d", "Dynamic");
     appendValue(d, parseJSON(`{"c":true}`));
     assert(d.dynamicTypeName(0) == "JSON" && d.getString(0) == `{"c":true}`);
+}
+
+@safe unittest
+{
+    import std.datetime.timezone : UTC;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.factory : createColumn;
+
+    // Fields read through typed columns (exact matches) and through readValue (conversions) give the same values
+    static struct Row
+    {
+        long a;
+        int b;
+        double c;
+        bool d;
+        string e;
+        SysTime f;
+        Date g;
+        UUID h;
+        ubyte i;
+    }
+
+    auto exact = new Block;
+    auto converting = new Block;
+    const string[] exactTypes = [
+        "Int64", "Int32", "Float64", "Bool", "String", "DateTime64(3, 'UTC')", "Date32", "UUID",
+        "UInt8"
+    ];
+    const string[] otherTypes = [
+        "UInt8", "Nullable(Int16)", "Float32", "UInt8", "LowCardinality(String)", "DateTime('UTC')",
+        "Date",
+        "Nullable(UUID)", "Int64"
+    ];
+    const names = columnNames!Row;
+    foreach (k, name; names)
+    {
+        exact.columns ~= createColumn(name, exactTypes[k]);
+        converting.columns ~= createColumn(name, otherTypes[k]);
+    }
+    const when = SysTime.fromUnixTime(1_600_000_000, UTC());
+    const id = UUID("00112233-4455-6677-8899-aabbccddeeff");
+    foreach (block; [exact, converting])
+    {
+        foreach (k; 0 .. names.length) switch (k)
+        {
+        case 0, 1, 8:
+            appendValue(block.columns[k], 7);
+            break;
+        case 2:
+            appendValue(block.columns[k], 1.5);
+            break;
+        case 3:
+            appendValue(block.columns[k], true);
+            break;
+        case 4:
+            appendValue(block.columns[k], "x");
+            break;
+        case 5:
+            appendValue(block.columns[k], when);
+            break;
+        case 6:
+            appendValue(block.columns[k], Date(2020, 1, 2));
+            break;
+        default:
+            appendValue(block.columns[k], id);
+        }
+        block.rows = 1;
+    }
+    const expected = Row(7, 7, 1.5, true, "x", when, Date(2020, 1, 2), id, 7);
+    foreach (block; [exact, converting])
+    {
+        auto bound = bindColumns!Row(block);
+        FastFields!Row fast;
+        bindFast!Row(fast, bound);
+        assert(readStruct!Row(bound, fast, 0) == expected);
+        assert(readStruct!Row(bound, 0) == expected);
+    }
+    FastFields!Row fast;
+    bindFast!Row(fast, bindColumns!Row(exact));
+    assert(fast[0].column !is null && fast[4].column !is null && fast[5].wide !is null);
+    bindFast!Row(fast, bindColumns!Row(converting));
+    assert(fast[0].column is null && fast[5].narrow !is null && fast[8].column is null);
 }
