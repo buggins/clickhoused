@@ -73,7 +73,7 @@ final class TimeColumn : FixedColumn!int
 
     override void appendDefault() @safe
     {
-        data ~= 0;
+        push(0);
     }
 
     /// Appends seconds.
@@ -81,7 +81,7 @@ final class TimeColumn : FixedColumn!int
     {
         if (value < -maxTimeSeconds || value > maxTimeSeconds)
             throw appendError("long", value);
-        data ~= cast(int) value;
+        push(cast(int) value);
     }
 
     /// ditto
@@ -89,7 +89,7 @@ final class TimeColumn : FixedColumn!int
     {
         if (value > maxTimeSeconds)
             throw appendError("ulong", value);
-        data ~= cast(int) value;
+        push(cast(int) value);
     }
 
     /// Appends seconds, truncated towards zero as the server converts them.
@@ -97,7 +97,7 @@ final class TimeColumn : FixedColumn!int
     {
         if (!(value > -(maxTimeSeconds + 1) && value < maxTimeSeconds + 1))
             throw appendError("double", value);
-        data ~= cast(int) value;
+        push(cast(int) value);
     }
 
     /// Appends the whole seconds of `value` (truncated towards zero).
@@ -115,7 +115,7 @@ final class TimeColumn : FixedColumn!int
         const ticks = parseTime(value, 0, false);
         if (ticks.isNull)
             throw appendError("string", value);
-        data ~= cast(int) ticks.get;
+        push(cast(int) ticks.get);
     }
 }
 
@@ -205,7 +205,7 @@ final class Time64Column : FixedColumn!long
 
     override void appendDefault() @safe
     {
-        data ~= 0;
+        push(0);
     }
 
     /// The largest magnitude of a value in ticks: 999:59:59.99…
@@ -219,7 +219,7 @@ final class Time64Column : FixedColumn!long
     {
         if (value < -maxTicks || value > maxTicks)
             throw appendError("long", value);
-        data ~= value;
+        push(value);
     }
 
     /// ditto
@@ -227,7 +227,7 @@ final class Time64Column : FixedColumn!long
     {
         if (value > maxTicks)
             throw appendError("ulong", value);
-        data ~= cast(long) value;
+        push(cast(long) value);
     }
 
     /// Appends seconds, truncated towards zero to the column precision as the server converts them.
@@ -235,7 +235,7 @@ final class Time64Column : FixedColumn!long
     {
         if (!(value > -(maxTimeSeconds + 1) && value < maxTimeSeconds + 1))
             throw appendError("double", value);
-        data ~= cast(long)(value * tenTo(precision));
+        push(cast(long)(value * tenTo(precision)));
     }
 
     /// Appends `value`, truncated towards zero to the column precision.
@@ -250,7 +250,7 @@ final class Time64Column : FixedColumn!long
         const factor = tenTo(precision - 7);
         if (hnsecs > maxTicks / factor || hnsecs < -maxTicks / factor)
             throw appendError("Duration", value);
-        data ~= hnsecs * factor;
+        push(hnsecs * factor);
     }
 
     /// Parses the forms `TimeColumn.appendString` accepts, plus a fraction
@@ -260,7 +260,7 @@ final class Time64Column : FixedColumn!long
         const ticks = parseTime(value, precision, true);
         if (ticks.isNull)
             throw appendError("string", value);
-        data ~= ticks.get;
+        push(ticks.get);
     }
 }
 

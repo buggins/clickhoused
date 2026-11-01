@@ -83,7 +83,7 @@ final class DateColumn : FixedColumn!ushort
 
     override void appendDefault() @safe
     {
-        data ~= 0;
+        push(0);
     }
 
     /// Accepts dates from 1970-01-01 to 2149-06-06.
@@ -92,7 +92,7 @@ final class DateColumn : FixedColumn!ushort
         const days = value.dayOfGregorianCal - epochDayNumber;
         if (days < minDays || days > maxDays)
             throw appendError("Date", value);
-        data ~= cast(typeof(data[0])) days;
+        push(cast(typeof(data[0])) days);
     }
 
     /// Appends the date of `value` in its own timezone.
@@ -106,7 +106,7 @@ final class DateColumn : FixedColumn!ushort
     {
         if (value < minDays || value > maxDays)
             throw appendError("long", value);
-        data ~= cast(typeof(data[0])) value;
+        push(cast(typeof(data[0])) value);
     }
 
     /// Parses `YYYY-MM-DD`.
@@ -170,7 +170,7 @@ final class Date32Column : FixedColumn!int
 
     override void appendDefault() @safe
     {
-        data ~= 0;
+        push(0);
     }
 
     /// Accepts dates from 1900-01-01 to 2299-12-31.
@@ -179,7 +179,7 @@ final class Date32Column : FixedColumn!int
         const days = value.dayOfGregorianCal - epochDayNumber;
         if (days < minDays || days > maxDays)
             throw appendError("Date", value);
-        data ~= cast(typeof(data[0])) days;
+        push(cast(typeof(data[0])) days);
     }
 
     /// Appends the date of `value` in its own timezone.
@@ -193,7 +193,7 @@ final class Date32Column : FixedColumn!int
     {
         if (value < minDays || value > maxDays)
             throw appendError("long", value);
-        data ~= cast(typeof(data[0])) value;
+        push(cast(typeof(data[0])) value);
     }
 
     /// Parses `YYYY-MM-DD`.
@@ -266,7 +266,7 @@ final class DateTimeColumn : FixedColumn!uint
 
     override void appendDefault() @safe
     {
-        data ~= 0;
+        push(0);
     }
 
     /// Appends the point in time, truncated to whole seconds. Accepts
@@ -287,7 +287,7 @@ final class DateTimeColumn : FixedColumn!uint
     {
         if (value < 0 || value > uint.max)
             throw appendError("long", value);
-        data ~= cast(uint) value;
+        push(cast(uint) value);
     }
 
     /// Parses `YYYY-MM-DD hh:mm:ss` in the column timezone.
@@ -381,7 +381,7 @@ final class DateTime64Column : FixedColumn!long
 
     override void appendDefault() @safe
     {
-        data ~= 0;
+        push(0);
     }
 
     /// Appends the point in time, truncated to the column precision.
@@ -390,13 +390,13 @@ final class DateTime64Column : FixedColumn!long
         const hnsecs = value.stdTime - unixTimeToStdTime(0);
         if (precision <= 7)
         {
-            data ~= floorDiv(hnsecs, pow10(7 - precision));
+            push(floorDiv(hnsecs, pow10(7 - precision)));
             return;
         }
         const factor = pow10(precision - 7);
         if (hnsecs > long.max / factor || hnsecs < long.min / factor)
             throw appendError("SysTime", value);
-        data ~= hnsecs * factor;
+        push(hnsecs * factor);
     }
 
     /// Appends midnight of `value` in the column timezone.
@@ -408,7 +408,7 @@ final class DateTime64Column : FixedColumn!long
     /// Appends raw ticks since the Unix epoch.
     override void appendLong(long value) @safe
     {
-        data ~= value;
+        push(value);
     }
 
     /// Parses `YYYY-MM-DD hh:mm:ss[.fraction]` in the column timezone;
@@ -421,7 +421,7 @@ final class DateTime64Column : FixedColumn!long
         // seconds * scale + fraction, where 0 <= fraction < scale
         if (seconds > (long.max - parsed.fraction) / scale || seconds < long.min / scale)
             throw appendError("string", value);
-        data ~= seconds * scale + parsed.fraction;
+        push(seconds * scale + parsed.fraction);
     }
 }
 

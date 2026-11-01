@@ -208,3 +208,16 @@ String values are read into shared buffers (`StringArena`: 4 KB first, doubling 
 | encode/Nullable(Int64) | 2.10–2.98 | 0.34–0.37 | 6–8x |
 
 The other cases are unchanged within noise (checked with alternating runs for `Map` and `Array`). The allocation counter now reports a few columns higher (e.g. `Array(UInt32)` 12 → 40 B/row): arrays used to grow in place, which `GC.allocatedInCurrentThread` does not count, and are now allocated once at their full size, which it does.
+
+### Column appends (#46)
+
+The column append methods write into a spare buffer each column keeps (`appendFast`), instead of `data ~= value`, whose runtime call (a GC block lookup) dominated per-row inserts. Reserving room alone had cut the allocations but not the time. Two rounds plus alternating re-runs, min times in ms (before: `main` with #44):
+
+| case | before ms | after ms | speed-up | alloc B/row |
+|---|---:|---:|---:|---:|
+| insert/addRow | 141.3–143.3 | 49.9–63.2 | 2.3–2.8x | 143 → 84 |
+| insert/structs | 148.3–177.8 | 49.0–51.1 | 3.0–3.5x | 144 → 84 |
+| decode/LowCardinality(String) 100 keys | 73.3–74.4 | 32.1–32.3 | ~2.3x | 9 → 41 |
+| decode/wide 24 columns | 60.4–80.5 | 39.9–42.1 | 1.4–2.0x | 253 → 379 |
+
+Inserting row by row now runs at about 20 million rows/s (whole blocks: about 50 million). Other cases are unchanged within noise; cases that looked slower in the first pass (`frame/decode lz4`, whose code did not change, `encode/LowCardinality`, `readValue`, `Map`, `Tuple`) came out equal or faster in alternating runs. Allocation figures for decoded LowCardinality columns rise because their values now grow in a doubling spare buffer, counted by the GC counter, where they used to be extended in place, which it doesn't count.

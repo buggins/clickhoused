@@ -18,7 +18,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException, ProtocolException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : Column, growRows, makeVariant;
+import clickhoused.types.column : appendFast, Column, growRows, makeVariant;
 
 /++
 `JSON` column: one JSON text per row, as the server writes it (`toString(j)`:
@@ -36,6 +36,7 @@ final class JsonColumn : Column
 
     /// JSON text of each row.
     string[] data;
+    private string[] spare; // room for appends; see `appendFast`
 
     /// Creates an empty column.
     this(string name, string typeName = "JSON") @safe pure nothrow
@@ -124,7 +125,7 @@ final class JsonColumn : Column
     /// Appends `{}`, the server's default for JSON.
     override void appendDefault() @safe
     {
-        data ~= "{}";
+        appendFast(data, spare, "{}");
     }
 
     override void truncate(size_t length) @safe
@@ -135,7 +136,7 @@ final class JsonColumn : Column
 
     override void appendFrom(const Column source, size_t row) @safe
     {
-        data ~= sameKind!JsonColumn(source).data[row];
+        appendFast(data, spare, sameKind!JsonColumn(source).data[row]);
     }
 
     /++
@@ -151,7 +152,7 @@ final class JsonColumn : Column
         {
             if (parseJSON(value).type == JSONType.object)
             {
-                data ~= value;
+                appendFast(data, spare, value);
                 return;
             }
         }

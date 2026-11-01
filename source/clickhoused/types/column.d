@@ -79,6 +79,31 @@ package bool[] readFlags(BufferedReader reader, size_t rows) @safe
     return flags;
 }
 
+/++
+Appends `value` to `data`, using `spare`, a larger buffer that `data` is the
+start of, while it has room: no runtime call and no reallocation per value.
+When `data` is not the start of `spare` (it was replaced or grew elsewhere),
+or `spare` is full, `spare` is reallocated at twice the size.
+
+Like `assumeSafeAppend`, appends after a `truncate` reuse the slots of the
+removed values: a slice of `data` taken before the truncation sees them change.
++/
+package void appendFast(T)(ref T[] data, ref T[] spare, T value) @safe pure nothrow
+{
+    const n = data.length;
+    if (n < spare.length && data is spare[0 .. n])
+    {
+        spare[n] = value;
+        data = spare[0 .. n + 1];
+        return;
+    }
+    auto grown = new T[](n < 8 ? 16 : n * 2);
+    grown[0 .. n] = data[];
+    grown[n] = value;
+    spare = grown;
+    data = grown[0 .. n + 1];
+}
+
 /// The next length of an array being filled with `rows` values, now holding `filled` of them.
 package size_t growRows(size_t filled, size_t rows) @safe pure nothrow @nogc
 {
@@ -364,8 +389,20 @@ layout as the native format.
 +/
 abstract class FixedColumn(T) : Column if (isFixedWireType!T)
 {
-    /// Column values.
+    /++
+    Column values. The append methods add to it through a spare buffer, with
+    no runtime call per value; appending to `data` directly (`~=`) works too,
+    but switching between the two on one column copies the values each time.
+    +/
     T[] data;
+
+    private T[] spare; // room for appends; see `appendFast`
+
+    /// Appends `value` to `data` (fast, amortized).
+    protected final void push(T value) @safe pure nothrow
+    {
+        appendFast(data, spare, value);
+    }
 
     /// Creates an empty column.
     this(string name, string typeName) @safe pure nothrow
@@ -402,7 +439,7 @@ abstract class FixedColumn(T) : Column if (isFixedWireType!T)
 
     override void appendFrom(const Column source, size_t row) @safe
     {
-        data ~= sameKind!(FixedColumn!T)(source).data[row];
+        push(sameKind!(FixedColumn!T)(source).data[row]);
     }
 }
 
@@ -502,4 +539,24 @@ package Variant makeVariant(T)(T value) @trusted
     assert(growRows(readChunkRows, huge) == 2 * readChunkRows);
     assert(growRows(4 * readChunkRows, huge) == 8 * readChunkRows);
     assert(growRows(huge - 10, huge) == huge);
+}
+
+@safe unittest
+{
+    // appendFast: values stay right when mixed with ~=, replaced arrays and truncation
+    int[] data;
+    int[] spare;
+    foreach (i; 0 .. 100)
+        appendFast(data, spare, i);
+    data ~= 100; // grows elsewhere: the next append starts a new spare buffer
+    appendFast(data, spare, 101);
+    data = data[0 .. 50]; // truncated: appends reuse the slots
+    appendFast(data, spare, -1);
+    int[] expected;
+    foreach (i; 0 .. 50)
+        expected ~= i;
+    assert(data == expected ~ -1);
+    data = [7]; // replaced
+    appendFast(data, spare, 8);
+    assert(data == [7, 8] && spare.length >= 2);
 }

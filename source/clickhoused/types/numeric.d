@@ -89,36 +89,36 @@ final class NumericColumn(T) : FixedColumn!T if (isIntegral!T || isFloatingPoint
 
     override void appendDefault() @safe
     {
-        data ~= cast(T) 0;
+        push(cast(T) 0);
     }
 
     override void appendLong(long value) @safe
     {
         static if (isFloatingPoint!T)
-            data ~= cast(T) value;
+            push(cast(T) value);
         else static if (isSigned!T)
         {
             if (value < T.min || value > T.max)
                 throw appendError("long", value);
-            data ~= cast(T) value;
+            push(cast(T) value);
         }
         else
         {
             if (value < 0 || cast(ulong) value > T.max)
                 throw appendError("long", value);
-            data ~= cast(T) value;
+            push(cast(T) value);
         }
     }
 
     override void appendUlong(ulong value) @safe
     {
         static if (isFloatingPoint!T)
-            data ~= cast(T) value;
+            push(cast(T) value);
         else
         {
             if (value > T.max)
                 throw appendError("ulong", value);
-            data ~= cast(T) value;
+            push(cast(T) value);
         }
     }
 
@@ -126,7 +126,7 @@ final class NumericColumn(T) : FixedColumn!T if (isIntegral!T || isFloatingPoint
     override void appendDouble(double value) @safe
     {
         static if (isFloatingPoint!T)
-            data ~= cast(T) value;
+            push(cast(T) value);
         else
         {
             import std.math : trunc;
@@ -135,13 +135,13 @@ final class NumericColumn(T) : FixedColumn!T if (isIntegral!T || isFloatingPoint
             enum double lower = isSigned!T ? -upper : 0;
             if (!(value >= lower && value < upper) || value != trunc(value))
                 throw appendError("double", value);
-            data ~= cast(T) value;
+            push(cast(T) value);
         }
     }
 
     override void appendBool(bool value) @safe
     {
-        data ~= cast(T)(value ? 1 : 0);
+        push(cast(T)(value ? 1 : 0));
     }
 
     /// Parses `value` as a number.
@@ -150,7 +150,7 @@ final class NumericColumn(T) : FixedColumn!T if (isIntegral!T || isFloatingPoint
         import std.conv : ConvException, to;
 
         try
-            data ~= value.to!T;
+            push(value.to!T);
         catch (ConvException)
             throw appendError("string", value);
     }
@@ -328,27 +328,27 @@ final class BFloat16Column : FixedColumn!ushort
 
     override void appendDefault() @safe
     {
-        data ~= cast(ushort) 0;
+        push(cast(ushort) 0);
     }
 
     override void appendLong(long value) @safe
     {
-        data ~= fromFloat(cast(float) value);
+        push(fromFloat(cast(float) value));
     }
 
     override void appendUlong(ulong value) @safe
     {
-        data ~= fromFloat(cast(float) value);
+        push(fromFloat(cast(float) value));
     }
 
     override void appendDouble(double value) @safe
     {
-        data ~= fromFloat(cast(float) value);
+        push(fromFloat(cast(float) value));
     }
 
     override void appendBool(bool value) @safe
     {
-        data ~= fromFloat(value ? 1 : 0);
+        push(fromFloat(value ? 1 : 0));
     }
 
     /// Parses `value` as a number.
@@ -357,7 +357,7 @@ final class BFloat16Column : FixedColumn!ushort
         import std.conv : ConvException, to;
 
         try
-            data ~= fromFloat(value.to!float);
+            push(fromFloat(value.to!float));
         catch (ConvException)
             throw appendError("string", value);
     }
@@ -434,6 +434,7 @@ final class BoolColumn : Column
 {
     /// Column values.
     bool[] data;
+    private bool[] spare; // room for appends; see `appendFast`
 
     /// Creates an empty column.
     this(string name, string typeName = "Bool") @safe pure nothrow
@@ -484,7 +485,7 @@ final class BoolColumn : Column
 
     override void appendDefault() @safe
     {
-        data ~= false;
+        appendFast(data, spare, false);
     }
 
     override void truncate(size_t length) @safe
@@ -495,12 +496,12 @@ final class BoolColumn : Column
 
     override void appendFrom(const Column source, size_t row) @safe
     {
-        data ~= sameKind!BoolColumn(source).data[row];
+        appendFast(data, spare, sameKind!BoolColumn(source).data[row]);
     }
 
     override void appendBool(bool value) @safe
     {
-        data ~= value;
+        appendFast(data, spare, value);
     }
 
     /// Accepts 0 and 1.
@@ -508,7 +509,7 @@ final class BoolColumn : Column
     {
         if (value != 0 && value != 1)
             throw appendError("long", value);
-        data ~= value == 1;
+        appendFast(data, spare, value == 1);
     }
 
     /// Accepts 0 and 1.
@@ -516,7 +517,7 @@ final class BoolColumn : Column
     {
         if (value > 1)
             throw appendError("ulong", value);
-        data ~= value == 1;
+        appendFast(data, spare, value == 1);
     }
 
     /// Accepts `"true"`, `"false"`, `"1"` and `"0"`.
@@ -526,11 +527,11 @@ final class BoolColumn : Column
         {
         case "true":
         case "1":
-            data ~= true;
+            appendFast(data, spare, true);
             break;
         case "false":
         case "0":
-            data ~= false;
+            appendFast(data, spare, false);
             break;
         default:
             throw appendError("string", value);
