@@ -50,6 +50,8 @@ enum TypeArgKind
     enumValue,
     /// A named element, e.g. `id UInt64` in `Tuple(id UInt64)`.
     namedType,
+    /// A named number, e.g. `max_types=2` in `Dynamic(max_types=2)`.
+    parameter,
 }
 
 /// One argument of a `TypeNode`.
@@ -59,10 +61,10 @@ struct TypeArg
     TypeArgKind kind;
     /// Nested type, for `TypeArgKind.type` and `TypeArgKind.namedType`.
     TypeNode type;
-    /// Value, for `TypeArgKind.number` and `TypeArgKind.enumValue`.
+    /// Value, for `TypeArgKind.number`, `TypeArgKind.enumValue` and `TypeArgKind.parameter`.
     long number;
     /// String, for `TypeArgKind.text`; label, for `TypeArgKind.enumValue`;
-    /// element name, for `TypeArgKind.namedType`.
+    /// element name, for `TypeArgKind.namedType`; name, for `TypeArgKind.parameter`.
     string text;
 
     /// Formats the argument back into ClickHouse syntax.
@@ -82,6 +84,8 @@ struct TypeArg
             return quote(text) ~ " = " ~ number.to!string;
         case TypeArgKind.namedType:
             return quoteName(text) ~ " " ~ type.toString();
+        case TypeArgKind.parameter:
+            return text ~ "=" ~ number.to!string;
         }
     }
 }
@@ -143,9 +147,13 @@ TypeNode parseType(string typeName) @safe pure
     foreach (s; [
         "UInt64", "Array(Nullable(String))", "DateTime64(3, 'UTC')",
         "Tuple(id UInt64, name String)", "Map(String, Array(Tuple(UInt8, Float64)))",
-        "Decimal(18, 4)", "Enum16('a' = -1, 'b\\'c' = 300)",
+        "Decimal(18, 4)", "Enum16('a' = -1, 'b\\'c' = 300)", "Dynamic(max_types=2)",
     ])
         assert(parseType(s).toString() == s, s);
+
+    const dynamic = parseType("Dynamic(max_types = 10)");
+    assert(dynamic.args[0].kind == TypeArgKind.parameter && dynamic.args[0].text == "max_types"
+            && dynamic.args[0].number == 10 && dynamic.toString() == "Dynamic(max_types=10)");
 
     // Spacing is irrelevant; backquoted element names are accepted
     assert(parseType(" Tuple( `my field` UInt8 ,x String ) ").toString() == "Tuple(`my field` UInt8, x String)");
@@ -235,11 +243,19 @@ private struct Parser
         }
         else
         {
-            // Either a type, or "name Type" (a named tuple element)
+            // A type, "name Type" (a named tuple element) or "name=number" (a parameter)
             const start = pos;
             const ident = parseIdentifier();
             skipSpaces();
-            if (isIdentStart(peek))
+            if (peek == '=')
+            {
+                pos++;
+                skipSpaces();
+                arg.kind = TypeArgKind.parameter;
+                arg.text = ident;
+                arg.number = parseNumber();
+            }
+            else if (isIdentStart(peek))
             {
                 arg.kind = TypeArgKind.namedType;
                 arg.text = ident;

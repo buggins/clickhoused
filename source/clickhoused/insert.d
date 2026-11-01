@@ -486,10 +486,13 @@ void appendValue(T)(Column column, auto ref T value) @safe
             : const(ubyte)[])
             || is(U == Date) || is(U == SysTime) || is(U == UUID) || is(U == Duration) || is(U == TimeOfDay)))
     {
+        import clickhoused.types.dynamic : DynamicColumn;
         import clickhoused.types.variant : VariantColumn;
 
         if (auto variant = cast(VariantColumn) column)
             return variant.appendToAny((Column c) => appendValue(c, value));
+        if (auto dynamic = cast(DynamicColumn) column)
+            return dynamic.appendTyped(dynamicTypeOf(value), (Column c) => appendValue(c, value));
     }
     static if (is(U == typeof(null)))
         column.appendNull();
@@ -619,6 +622,116 @@ void appendValue(T)(Column column, auto ref T value) @safe
     }
     else
         static assert(0, "Cannot insert values of type " ~ T.stringof);
+}
+
+/++
+The type a value of D type `T` gets in a `Dynamic` column when it has no
+typed append (arrays, structs, `Decimal`, ...): `Array(...)` of the element
+type, `Map(K, V)`, a named `Tuple` for a struct, `Decimal(P, S)` with the
+smallest precision that fits the value.
++/
+string dynamicTypeOf(T)(auto ref const T value) @safe
+{
+    import std.traits : Unqual;
+
+    alias U = Unqual!T;
+    static if (is(U == Decimal))
+    {
+        import std.algorithm.comparison : max;
+
+        const text = value.unscaled.toString();
+        const digits = text.length - (text[0] == '-' ? 1 : 0);
+        const needed = max(digits, value.scale, 1);
+        const precision = needed <= 9 ? 9 : needed <= 18 ? 18 : needed <= 38 ? 38 : 76;
+        return "Decimal(" ~ toText(precision) ~ ", " ~ toText(value.scale) ~ ")";
+    }
+    else
+    {
+        enum name = dynamicTypeName!U();
+        static if (name is null)
+            throw new ClientException(
+                    "No ClickHouse type for " ~ T.stringof
+                    ~ " in a Dynamic column; use DynamicColumn.appendTyped");
+        else
+            return name;
+    }
+}
+
+/// ditto, for types whose ClickHouse type doesn't depend on the value; `null` if there is none.
+private string dynamicTypeName(T)() @safe pure
+{
+    import std.traits : hasUDA, KeyType, Unqual, ValueType;
+    import std.typecons : StdTuple = Tuple;
+    import clickhoused.mapping : columnNames, IgnoreField, isTupleValue;
+    import clickhoused.types.geo : GeoPoint;
+
+    alias U = Unqual!T;
+    static if (is(U == enum))
+        return "String"; // stored by member name
+    else static if (is(U == bool))
+        return "Bool";
+    else static if (isIntegral!U)
+        return isSigned!U ? "Int64" : "UInt64";
+    else static if (isFloatingPoint!U)
+        return "Float64";
+    else static if (isSomeString!U || is(U : const(ubyte)[]))
+        return "String";
+    else static if (is(U : Nullable!V, V))
+        return wrap("Nullable(", dynamicTypeName!V(), ")");
+    else static if (is(U == Date))
+        return "Date32";
+    else static if (is(U == SysTime))
+        return "DateTime64(9)";
+    else static if (is(U == UUID) || is(U == IPv4) || is(U == IPv6))
+        return U.stringof;
+    else static if (isWideInt!U)
+        return U.typeName;
+    else static if (is(U == BigInt))
+        return "Int256";
+    else static if (is(U == GeoPoint))
+        return "Point";
+    else static if (isDynamicArray!U)
+        return wrap("Array(", dynamicTypeName!(typeof(U.init[0]))(), ")");
+    else static if (isAssociativeArray!U)
+    {
+        const key = dynamicTypeName!(KeyType!U)();
+        return key is null ? null : wrap("Map(" ~ key ~ ", ", dynamicTypeName!(ValueType!U)(), ")");
+    }
+    else static if (isInstanceOf!(StdTuple, U))
+    {
+        string s = "Tuple(";
+        static foreach (i, F; U.Types)
+        {
+            if (dynamicTypeName!F() is null)
+                return null;
+            s ~= (i ? ", " : "") ~ (U.fieldNames[i].length ? "`" ~ U.fieldNames[i] ~ "` " : "") ~ dynamicTypeName!F();
+        }
+        return s ~ ")";
+    }
+    else static if (isTupleValue!U)
+    {
+        string s = "Tuple(";
+        size_t k;
+        static foreach (i; 0 .. U.tupleof.length)
+        {
+            static if (!hasUDA!(U.tupleof[i], IgnoreField))
+            {
+                if (dynamicTypeName!(typeof(U.tupleof[i]))() is null)
+                    return null;
+                s ~= (k ? ", " : "") ~ "`" ~ columnNames!U[k] ~ "` " ~ dynamicTypeName!(typeof(U.tupleof[i]))();
+                k++;
+            }
+        }
+        return s ~ ")";
+    }
+    else
+        return null;
+}
+
+/// `open ~ inner ~ close`, or `null` if `inner` is.
+private string wrap(string open, string inner, string close) @safe pure
+{
+    return inner is null ? null : open ~ inner ~ close;
 }
 
 private size_t estimateSize(T)(auto ref T value) @safe pure nothrow

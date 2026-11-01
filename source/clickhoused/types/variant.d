@@ -66,7 +66,7 @@ final class VariantColumn : Column
     +/
     this(string name, string typeName, Column[] variants) @safe pure nothrow
     {
-        assert(variants.length < nullDiscriminator);
+        assert(variants.length <= nullDiscriminator);
         super(name, typeName);
         this.variants = variants;
     }
@@ -91,6 +91,22 @@ final class VariantColumn : Column
     {
         const d = discriminators[row];
         return d == nullDiscriminator ? null : variants[d].typeName;
+    }
+
+    /++
+    Replaces the discriminators (validated by the caller) and returns how many
+    rows each alternative holds; the alternatives' columns must then be
+    filled to match.
+    +/
+    package(clickhoused) size_t[] assignDiscriminators(ubyte[] newDiscriminators) @safe
+    {
+        auto counts = new size_t[variants.length];
+        discriminators = newDiscriminators;
+        positions.length = newDiscriminators.length;
+        foreach (row, d; newDiscriminators)
+            if (d != nullDiscriminator)
+                positions[row] = counts[d]++;
+        return counts;
     }
 
     /// The position of the value of `row` in the column of its alternative (meaningless for NULL).
