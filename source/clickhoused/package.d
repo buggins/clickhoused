@@ -32,11 +32,11 @@ public import clickhoused.types;
 /// Library version, reported to the server in the client Hello packet.
 enum uint clickhousedVersionMajor = 0;
 /// ditto
-enum uint clickhousedVersionMinor = 5;
+enum uint clickhousedVersionMinor = 6;
 /// ditto
 enum uint clickhousedVersionPatch = 0;
 
-/// Library version as a string, e.g. `"0.5.0"`.
+/// Library version as a string, e.g. `"0.6.0"`.
 enum string clickhousedVersion = versionString(clickhousedVersionMajor,
             clickhousedVersionMinor, clickhousedVersionPatch);
 
@@ -67,7 +67,7 @@ private string versionString(uint major, uint minor, uint patch) pure @safe
 ///
 @safe unittest
 {
-    assert(clickhousedVersion == "0.5.0");
+    assert(clickhousedVersion == "0.6.0");
     assert(clickhousedClientName == "clickhoused");
 }
 
