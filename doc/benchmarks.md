@@ -148,3 +148,22 @@ ZSTD (a separate run, `--override-config clickhoused/zstd`): frame encode 225 MB
 - **query!T struct mapping** halves SELECT throughput compared with reading columns (2.8 vs 6.3 Mrows/s); `readValue!long` costs about 60 ns per cell against 9 ns for `getLong`.
 - **INSERT with addRow or structs** runs at about 4.5 million rows/s and allocates about 145 bytes per row, against 31 million rows/s for whole blocks.
 - **Text of floats and dates is slow**: `getString` of a `Float64` costs about 30 µs and 3 KB per value (the exact shortest-decimal path through BigInt), of a `DateTime64` about 2.4 µs and 160 bytes.
+
+## Performance changes
+
+Each change is measured back to back against a build of the previous commit, on the same machine in the same session (min times; the machine is noisy, so the ranges come from several rounds).
+
+### LZ4 (#40)
+
+Inner loops rewritten as checked pointer code: fixed 8/16-byte copies where enough room is left, short repeat distances without byte-by-byte copies, matches extended 8 bytes at a time, output buffers not zero-filled.
+
+| case | before MB/s | after MB/s | speed-up |
+|---|---:|---:|---:|
+| lz4/compress 1 MiB chunks | 317–450 | 678–734 | 1.6–2.1x |
+| lz4/decompress 1 MiB chunks | 534–660 | 4,062–4,420 | 6.6–7.6x |
+| frame/encode lz4 | 318–416 | 624–731 | 1.8–2.0x |
+| frame/decode lz4 | 525–626 | 2,977–3,310 | 5.3–5.7x |
+| decode-lz4/6 columns | 150–215 | 155–260 | 1.0–1.4x |
+| query/drain lz4 | 189–222 | 233–412 | 1.2–2.1x |
+
+Decompression is now in the range the LZ4 project quotes for its reference implementation. With compression on, the remaining cost of a SELECT is decoding the columns (strings first), not LZ4.
