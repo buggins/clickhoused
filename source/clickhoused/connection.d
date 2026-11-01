@@ -432,6 +432,8 @@ final class Connection
             all["network_compression_method"] = "ZSTD";
             all["network_zstd_compression_level"] = options.zstdLevel.to!string;
         }
+        if (options.simpleNativeFormats && serverVersionAtLeast(24, 10))
+            all["output_format_native_write_json_as_string"] = "1"; // JSON as text
         if (options.simpleNativeFormats && serverVersionAtLeast(25, 6))
             all["output_format_native_use_flattened_dynamic_and_json_serialization"] = "1"; // Dynamic without binary values
         foreach (name, value; options.settings)
@@ -833,8 +835,10 @@ version (unittest)
 
 @safe unittest
 {
-    // The flattened Dynamic form is requested from 25.6 on, unless switched off or set explicitly
+    // The flattened Dynamic form is requested from 25.6 on, JSON as text from 24.10 on, unless switched off or
+    // set explicitly
     enum flattened = "output_format_native_use_flattened_dynamic_and_json_serialization";
+    enum jsonText = "output_format_native_write_json_as_string";
     auto s = new ScriptedServer;
     s.hello(); // 26.11
     auto conn = s.connect();
@@ -842,10 +846,14 @@ version (unittest)
     assert(conn.mergedSettings([flattened: "0"])[flattened] == "0");
     conn.server.versionMajor = 25;
     conn.server.versionMinor = 5;
-    assert(flattened !in conn.mergedSettings(null));
+    assert(flattened !in conn.mergedSettings(null) && conn.mergedSettings(null)[jsonText] == "1");
+    conn.server.versionMajor = 24;
+    conn.server.versionMinor = 9;
+    assert(jsonText !in conn.mergedSettings(null));
+    conn.server.versionMajor = 25;
     conn.server.versionMinor = 6;
     conn.options.simpleNativeFormats = false;
-    assert(flattened !in conn.mergedSettings(null));
+    assert(flattened !in conn.mergedSettings(null) && jsonText !in conn.mergedSettings(null));
 }
 
 @safe unittest

@@ -28,6 +28,7 @@ import std.traits : isAssociativeArray, isDynamicArray, isFloatingPoint, isInsta
     isSomeString;
 import std.meta : AliasSeq;
 import std.typecons : Nullable;
+import std.json : JSONValue;
 import std.uuid : UUID;
 import std.variant : Variant;
 
@@ -145,7 +146,8 @@ final class Inserter
     `std.datetime.TimeOfDay` (for `Time` and `Time64`), `std.uuid.UUID`,
     D enums (stored by member name), `Int128`/`UInt128`/`Int256`/`UInt256`,
     `std.bigint.BigInt`, `Decimal`, `IPv4`, `IPv6`, structs and `std.typecons.Tuple` (for
-    `Tuple` columns), associative arrays (for `Map` columns), `std.variant.Variant` (its held value,
+    `Tuple` columns), associative arrays (for `Map` columns), `std.json.JSONValue` (as JSON text),
+    `std.variant.Variant` (its held value,
     see `appendVariant`), `null`, `std.typecons.Nullable`, and
     dynamic arrays of these for `Array` columns (`[1, 2]`, `["a"]`, `[[1], []]`).
     Values are converted to the column types with range checks.
@@ -443,7 +445,7 @@ void appendVariant(Column column, Variant value) @trusted
     if (!value.hasValue)
         return column.appendNull();
     static foreach (V; AliasSeq!(long, int, short, byte, ulong, uint, ushort, ubyte, double, float, bool, string,
-            const(char)[], Date, SysTime, UUID, Duration, TimeOfDay))
+            const(char)[], Date, SysTime, UUID, Duration, TimeOfDay, JSONValue))
         if (auto p = value.peek!V)
             return appendValue(column, *p);
     throw new ClientException("Cannot store a Variant holding " ~ value.type.toString() ~ " in column '"
@@ -549,6 +551,8 @@ void appendValue(T)(Column column, auto ref T value) @safe
         column.appendDuration(value);
     else static if (is(U == TimeOfDay))
         column.appendDuration(value - TimeOfDay(0, 0, 0));
+    else static if (is(U == JSONValue))
+        column.appendString(value.toString()); // JSON text, parsed by the server
     else static if (isWideInt!U)
     {
         if (auto wide = cast(WideIntColumn!U) column)
@@ -690,6 +694,8 @@ private string dynamicTypeName(T)() @safe pure
         return "Int256";
     else static if (is(U == GeoPoint))
         return "Point";
+    else static if (is(U == JSONValue))
+        return "JSON";
     else static if (isDynamicArray!U)
         return wrap("Array(", dynamicTypeName!(typeof(U.init[0]))(), ")");
     else static if (isAssociativeArray!U)

@@ -14,6 +14,7 @@ import clickhoused.types.decimal;
 import clickhoused.types.dynamic : DynamicColumn;
 import clickhoused.types.geo : geoUnderlyingType;
 import clickhoused.types.ip : IPv4, IPv4Column, IPv6, IPv6Column;
+import clickhoused.types.json : JsonColumn;
 import clickhoused.types.lowcardinality : LowCardinalityColumn;
 import clickhoused.types.map : MapColumn;
 import clickhoused.types.misc;
@@ -220,7 +221,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         const innerType = type.args[0].type;
         if (innerType.name == "LowCardinality" || innerType.name == "Array" || innerType.name == "Tuple"
                 || innerType.name == "Map" || innerType.name == "Nested" || innerType.name == "Variant"
-                || innerType.name == "Dynamic")
+                || innerType.name == "Dynamic" || innerType.name == "JSON")
             throw invalid();
         // The dictionary holds the inner type without Nullable: NULL is index 0
         const keyType = innerType.name == "Nullable" ? innerType.args[0].type : innerType;
@@ -280,6 +281,11 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             if (arg.kind != TypeArgKind.parameter)
                 throw invalid();
         return new DynamicColumn(name, typeName, defaultTimezone);
+    case "JSON":
+        // Typed paths and parameters don't matter: values come as JSON text
+        if (type.args.length > 1 || (type.args.length == 1 && type.args[0].kind != TypeArgKind.raw))
+            throw invalid();
+        return new JsonColumn(name, typeName);
     case "Geometry":
         if (type.args.length != 0)
             throw invalid();
@@ -342,7 +348,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
 
     assert(cast(UInt8Column)(cast(ArrayColumn) createColumn("a", "Array(UInt8)")).elements !is null);
     assert(cast(MapColumn) createColumn("m", "Map(String, Array(UInt8))") !is null);
-    assertThrown!ClientException(createColumn("x", "JSON"));
+    assertThrown!ClientException(createColumn("x", "Object('json')"));
     assert(cast(DynamicColumn) createColumn("d", "Dynamic(max_types=8)") !is null);
     assertThrown!ProtocolException(createColumn("x", "Dynamic(String)"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(Dynamic)"));
@@ -351,7 +357,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     auto geometry = cast(VariantColumn) createColumn("g", "Geometry");
     assert(geometry.typeName == "Geometry" && geometry.variants.length == 7);
     assert(geometry.variants[3].typeName == "Point");
-    assertThrown!ClientException(createColumn("x", "Array(JSON)"));
+    assert(cast(JsonColumn)(cast(ArrayColumn) createColumn("x", "Array(JSON)")).elements !is null);
     assertThrown!ProtocolException(createColumn("x", "Map(String)"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(Map(String, UInt8))"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(Array(UInt8))"));
@@ -400,7 +406,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Point", "Polygon", "MultiPolygon", "Variant(String, UInt8)", "Array(Variant(Int64, String))",
         "Variant(LowCardinality(String), Tuple(UInt8, String))", "Geometry", "Dynamic",
         "Array(Dynamic)",
-        "Tuple(Dynamic(max_types=3), Variant(String, UInt8))",
+        "Tuple(Dynamic(max_types=3), Variant(String, UInt8))", "JSON",
+        "Array(Nullable(JSON(a UInt8)))",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -458,6 +465,8 @@ version (unittest)
         }
         else if (auto lc = cast(LowCardinalityColumn) c)
             fill(lc.values);
+        else if (auto j = cast(JsonColumn) c)
+            j.data = [`{"a":1}`, "{}"];
         else if (auto d = cast(DynamicColumn) c)
         {
             d.appendTyped("Map(String, UInt8)", (e) { e.appendString("{'k':1}"); });
