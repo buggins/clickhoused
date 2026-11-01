@@ -169,6 +169,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 | `String`, `FixedString(N)` | `StringColumn`, `FixedStringColumn` | `string`, `ubyte[]` |
 | `Date`, `Date32` | `DateColumn`, `Date32Column` | `Date` |
 | `DateTime[(tz)]`, `DateTime64(p[, tz])` | `DateTimeColumn`, `DateTime64Column` | `SysTime` |
+| `Time`, `Time64(p)` (25.6+) | `TimeColumn`, `Time64Column` | `Duration` (±999:59:59), or `TimeOfDay` from 00:00:00 to 23:59:59 |
 | `UUID` | `UUIDColumn` | `UUID` |
 | `IPv4`, `IPv6` | `IPv4Column`, `IPv6Column` | `IPv4`, `IPv6` (also `string`; `uint` for IPv4) |
 | `Enum8`, `Enum16` | `Enum8Column`, `Enum16Column` | label `string`, or a D `enum` |
@@ -182,7 +183,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 ## Limitations
 
 - TLS needs the system's OpenSSL; on macOS that is Homebrew's (the built-in LibreSSL is not used).
-- Not supported yet: `Variant`/`Dynamic`/`JSON` (and the `Geometry` type built on Variant), `Time`/`Time64`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
+- Not supported yet: `Variant`/`Dynamic`/`JSON` (and the `Geometry` type built on Variant). A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
 - On Windows, timezone names fall back to UTC (no system timezone database). The point in time stays correct.
 
 ## Building and testing

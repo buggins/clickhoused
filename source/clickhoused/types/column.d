@@ -12,6 +12,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types.column;
 
+import core.time : Duration;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
 import std.uuid : UUID;
@@ -160,6 +161,12 @@ abstract class Column
         throw conversionError(row, "UUID");
     }
 
+    /// The value in `row` as a time span (for `Time` and `Time64`).
+    Duration getDuration(size_t row) const @safe
+    {
+        throw conversionError(row, "Duration");
+    }
+
     /++
     The value in `row` as a `std.variant.Variant` holding the natural D type
     of the column (e.g. `ulong` for `UInt64`, `SysTime` for `DateTime`).
@@ -237,6 +244,12 @@ abstract class Column
     void appendUUID(UUID value) @safe
     {
         throw appendError("UUID", value);
+    }
+
+    /// Appends a time span (for `Time` and `Time64`).
+    void appendDuration(Duration value) @safe
+    {
+        throw appendError("Duration", value);
     }
 
     /++

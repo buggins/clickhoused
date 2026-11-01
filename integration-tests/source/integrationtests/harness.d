@@ -27,6 +27,7 @@ import integrationtests.mapping;
 import integrationtests.pool;
 import integrationtests.server : serverConfigured, tlsConfigured;
 import integrationtests.smoke;
+import integrationtests.time;
 import integrationtests.tls;
 import integrationtests.tuple;
 import integrationtests.types;
@@ -110,6 +111,8 @@ immutable TestCase[] allTests = [
     TestCase("Float32/Float64: text", &testFloatText, true),
     TestCase("BFloat16: read", &testBFloat16Read, true),
     TestCase("BFloat16: insert and struct mapping", &testBFloat16Insert, true),
+    TestCase("Time/Time64: read", &testTimeRead, true),
+    TestCase("Time/Time64: insert and struct mapping", &testTimeInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

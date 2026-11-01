@@ -11,6 +11,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types.lowcardinality;
 
+import core.time : Duration;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
 import std.uuid : UUID;
@@ -241,6 +242,11 @@ final class LowCardinalityColumn : Column
         return values.getUUID(row);
     }
 
+    override Duration getDuration(size_t row) const @safe
+    {
+        return values.getDuration(row);
+    }
+
     override Variant getVariant(size_t row) const @safe
     {
         return values.getVariant(row);
@@ -304,6 +310,11 @@ final class LowCardinalityColumn : Column
     override void appendUUID(UUID value) @safe
     {
         values.appendUUID(value);
+    }
+
+    override void appendDuration(Duration value) @safe
+    {
+        values.appendDuration(value);
     }
 
     /// Copies a value from another LowCardinality column, or from a column of the inner type.
