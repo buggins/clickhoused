@@ -30,12 +30,15 @@ package struct TextElement
     /// (for a Variant column, choosing the alternative by whether the text was quoted).
     void appendTo(Column column) const @safe
     {
+        import clickhoused.types.dynamic : DynamicColumn;
         import clickhoused.types.variant : VariantColumn;
 
         if (kind == Kind.null_)
             column.appendNull();
         else if (auto variant = cast(VariantColumn) column)
             variant.appendTextElement(text, kind == Kind.quoted); // `1` and `'1'` go to different alternatives
+        else if (auto dynamic = cast(DynamicColumn) column)
+            dynamic.appendTextElement(text, kind == Kind.quoted); // `1` is Int64, `'1'` String
         else
             column.appendString(text);
     }

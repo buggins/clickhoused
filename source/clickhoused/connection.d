@@ -432,11 +432,19 @@ final class Connection
             all["network_compression_method"] = "ZSTD";
             all["network_zstd_compression_level"] = options.zstdLevel.to!string;
         }
+        if (options.simpleNativeFormats && serverVersionAtLeast(25, 6))
+            all["output_format_native_use_flattened_dynamic_and_json_serialization"] = "1"; // Dynamic without binary values
         foreach (name, value; options.settings)
             all[name] = value;
         foreach (name, value; settings)
             all[name] = value;
         return all;
+    }
+
+    /// Whether the server version is `major.minor` or newer.
+    private bool serverVersionAtLeast(ulong major, ulong minor) const @safe pure nothrow
+    {
+        return server.versionMajor > major || (server.versionMajor == major && server.versionMinor >= minor);
     }
 
     /// Whether data blocks are compressed on this connection.
@@ -821,6 +829,23 @@ version (unittest)
     assert(result.header.columns[0].name == "x");
     assert(result.stats.progress.readRows == 3);
     assert(!conn.isBusy && conn.isOpen);
+}
+
+@safe unittest
+{
+    // The flattened Dynamic form is requested from 25.6 on, unless switched off or set explicitly
+    enum flattened = "output_format_native_use_flattened_dynamic_and_json_serialization";
+    auto s = new ScriptedServer;
+    s.hello(); // 26.11
+    auto conn = s.connect();
+    assert(conn.mergedSettings(null)[flattened] == "1");
+    assert(conn.mergedSettings([flattened: "0"])[flattened] == "0");
+    conn.server.versionMajor = 25;
+    conn.server.versionMinor = 5;
+    assert(flattened !in conn.mergedSettings(null));
+    conn.server.versionMinor = 6;
+    conn.options.simpleNativeFormats = false;
+    assert(flattened !in conn.mergedSettings(null));
 }
 
 @safe unittest

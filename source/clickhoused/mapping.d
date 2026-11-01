@@ -188,6 +188,15 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
 
             if (auto variant = cast(VariantColumn) column)
                 return readValue!T(variant.variants[variant.discriminators[row]], variant.position(row));
+
+            import clickhoused.types.dynamic : DynamicColumn;
+
+            if (auto dynamic = cast(DynamicColumn) column)
+            {
+                size_t position;
+                dynamic.held(row, position); // throws for NULL and undecodable values
+                return readValue!T(dynamic.values.variants[dynamic.values.discriminators[row]], position);
+            }
         }
         static if (isMappedArray!U)
         {
@@ -898,4 +907,45 @@ private string columnList(Block block) @safe
     assert(readValue!(ubyte[])(c, 0) == [1, 2] && readValue!Pair(c, 4) == Pair(3, "x"));
     assertThrown!ClientException(appendValue(c, [1.5]));
     assert(c.length == 6);
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import std.typecons : tuple;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.decimal : Decimal;
+    import clickhoused.types.dynamic : DynamicColumn;
+    import clickhoused.types.factory : createColumn;
+    import clickhoused.types.ip : IPv4;
+
+    // Dynamic: the type comes from the D value
+    static struct Pair
+    {
+        ubyte a;
+        @column("b c") string b;
+    }
+
+    auto d = cast(DynamicColumn) createColumn("d", "Dynamic");
+    appendValue(d, 5);
+    appendValue(d, [1L, 2]);
+    appendValue(d, ["k": [1.5]]);
+    appendValue(d, Pair(3, "x"));
+    appendValue(d, tuple(1, "y"));
+    appendValue(d, Decimal.fromString("-12.345"));
+    appendValue(d, IPv4(0x01020304));
+    appendValue(d, [Nullable!int(1), Nullable!int.init]);
+    appendValue(d, null);
+    string[] kinds;
+    foreach (row; 0 .. 8) // the last row is NULL
+        kinds ~= d.dynamicTypeName(row) ~ " " ~ d.getString(row);
+    assert(kinds == [
+        "Int64 5", "Array(Int64) [1,2]", "Map(String, Array(Float64)) {'k':[1.5]}",
+        "Tuple(a UInt64, `b c` String) (3,'x')", "Tuple(Int64, String) (1,'y')",
+        "Decimal(9, 3) -12.345",
+        "IPv4 1.2.3.4", "Array(Nullable(Int64)) [1,NULL]"
+    ], kinds[3]);
+    assert(d.isNull(8));
+    assert(readValue!(long[])(d, 1) == [1, 2] && readValue!Pair(d, 3) == Pair(3, "x"));
+    assertThrown!ClientException(readValue!long(d, 8));
 }

@@ -124,6 +124,15 @@ struct ConnectionOptions
     bool yieldBetweenBlocks = true;
 
     /++
+    Ask the server for the forms of `Dynamic` columns that this client reads
+    fully: the flattened form, on servers 25.6 and newer (the setting
+    `output_format_native_use_flattened_dynamic_and_json_serialization`).
+    Without it, values that overflow a column's `max_types` arrive
+    binary-encoded and can't be read. Settings given explicitly win.
+    +/
+    bool simpleNativeFormats = true;
+
+    /++
     Settings sent with every query, e.g. `["max_threads": "4"]`.
 
     Unknown setting names are rejected by the server. Per-query settings
@@ -146,7 +155,7 @@ struct ConnectionOptions
         $(LI `connect_timeout`, `send_timeout`, `receive_timeout`: seconds, may be fractional;)
         $(LI `io`: `auto`, `phobos` or `vibe`;)
         $(LI `host_selection`: `in_order` or `random`;)
-        $(LI `client_name`, `quota_key`, `yield_between_blocks` (`true`/`false`);)
+        $(LI `client_name`, `quota_key`, `yield_between_blocks`, `simple_native_formats` (`true`/`false`);)
         $(LI `secure` (or `tls`): `true`/`1` to connect over TLS; the default port becomes 9440;)
         $(LI `skip_verify`: `true` to accept any server certificate (development only);)
         $(LI `tls_ca_file`: PEM file of trusted CAs, instead of the system store;)
@@ -334,6 +343,9 @@ struct ConnectionOptions
             case "yield_between_blocks":
                 options.yieldBetweenBlocks = parse!bool;
                 break;
+            case "simple_native_formats":
+                options.simpleNativeFormats = parseFlag(key, value);
+                break;
             case "secure":
             case "tls":
                 options.secure = parseFlag(key, value);
@@ -394,9 +406,10 @@ struct ConnectionOptions
 
     // IPv6, timeouts, I/O mode, flags
     o = ConnectionOptions.fromDsn("clickhouse://[::1]:9440/?connect_timeout=0.5&io=phobos&yield_between_blocks=false"
-            ~ "&host_selection=random&pool_max=4&compress=zstd&zstd_level=3");
+            ~ "&host_selection=random&pool_max=4&compress=zstd&zstd_level=3&simple_native_formats=false");
     assert(o.hosts == [HostPort("::1", 9440)] && o.hosts[0].toString() == "[::1]:9440");
     assert(o.connectTimeout == 500.msecs && o.ioMode == IoMode.phobos && !o.yieldBetweenBlocks);
+    assert(!o.simpleNativeFormats && ConnectionOptions.init.simpleNativeFormats);
     assert(o.hostSelection == HostSelection.random && o.compression == Compression.zstd && o.zstdLevel == 3);
     assert("pool_max" !in o.settings && o.database == "default");
 

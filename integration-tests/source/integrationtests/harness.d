@@ -17,6 +17,7 @@ import integrationtests.basic;
 import integrationtests.compression;
 import integrationtests.concurrency;
 import integrationtests.decimal;
+import integrationtests.dynamic;
 import integrationtests.floats;
 import integrationtests.geo;
 import integrationtests.insert;
@@ -120,6 +121,9 @@ immutable TestCase[] allTests = [
     TestCase("Variant: read", &testVariantRead, true),
     TestCase("Variant: insert and mapping", &testVariantInsert, true),
     TestCase("Geometry", &testGeometry, true),
+    TestCase("Dynamic: read", &testDynamicRead, true),
+    TestCase("Dynamic: SharedVariant (V1 form)", &testDynamicSharedVariant, true),
+    TestCase("Dynamic: insert and mapping", &testDynamicInsert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

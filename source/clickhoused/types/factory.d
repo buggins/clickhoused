@@ -11,6 +11,7 @@ import clickhoused.types.array : ArrayColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.datetime;
 import clickhoused.types.decimal;
+import clickhoused.types.dynamic : DynamicColumn;
 import clickhoused.types.geo : geoUnderlyingType;
 import clickhoused.types.ip : IPv4, IPv4Column, IPv6, IPv6Column;
 import clickhoused.types.lowcardinality : LowCardinalityColumn;
@@ -203,7 +204,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         const nestedType = type.args[0].type;
         if (nestedType.name == "Nullable" || nestedType.name == "Array" || nestedType.name == "LowCardinality"
                 || nestedType.name == "Tuple" || nestedType.name == "Map" || nestedType.name == "Nested"
-                || nestedType.name == "Variant")
+                || nestedType.name == "Variant" || nestedType.name == "Dynamic")
             throw invalid();
         auto nested = createColumn(name, nestedType.toString(), nestedType, defaultTimezone);
         return new NullableColumn(name, typeName, nested);
@@ -218,7 +219,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             throw invalid();
         const innerType = type.args[0].type;
         if (innerType.name == "LowCardinality" || innerType.name == "Array" || innerType.name == "Tuple"
-                || innerType.name == "Map" || innerType.name == "Nested" || innerType.name == "Variant")
+                || innerType.name == "Map" || innerType.name == "Nested" || innerType.name == "Variant"
+                || innerType.name == "Dynamic")
             throw invalid();
         // The dictionary holds the inner type without Nullable: NULL is index 0
         const keyType = innerType.name == "Nullable" ? innerType.args[0].type : innerType;
@@ -267,11 +269,17 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         Column[] alternatives;
         foreach (ref arg; type.args)
         {
-            if (arg.kind != TypeArgKind.type || arg.type.name == "Nullable")
+            if (arg.kind != TypeArgKind.type || arg.type.name == "Nullable" || arg.type.name == "Dynamic")
                 throw invalid();
             alternatives ~= createColumn(name, arg.type.toString(), arg.type, defaultTimezone);
         }
         return new VariantColumn(name, typeName, alternatives);
+    case "Dynamic":
+        // Parameters such as max_types=N don't change the format: the types come with the data
+        foreach (ref arg; type.args)
+            if (arg.kind != TypeArgKind.parameter)
+                throw invalid();
+        return new DynamicColumn(name, typeName, defaultTimezone);
     case "Geometry":
         if (type.args.length != 0)
             throw invalid();
@@ -334,7 +342,10 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
 
     assert(cast(UInt8Column)(cast(ArrayColumn) createColumn("a", "Array(UInt8)")).elements !is null);
     assert(cast(MapColumn) createColumn("m", "Map(String, Array(UInt8))") !is null);
-    assertThrown!ClientException(createColumn("x", "Dynamic"));
+    assertThrown!ClientException(createColumn("x", "JSON"));
+    assert(cast(DynamicColumn) createColumn("d", "Dynamic(max_types=8)") !is null);
+    assertThrown!ProtocolException(createColumn("x", "Dynamic(String)"));
+    assertThrown!ProtocolException(createColumn("x", "Nullable(Dynamic)"));
     assertThrown!ProtocolException(createColumn("x", "Variant(Nullable(String))"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(Variant(String))"));
     auto geometry = cast(VariantColumn) createColumn("g", "Geometry");
@@ -387,7 +398,9 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Array(Tuple(LowCardinality(String), UInt8))", "Nested(a UInt8, b Array(String))",
         "Map(String, Int64)", "Map(LowCardinality(String), Array(Nullable(String)))",
         "Point", "Polygon", "MultiPolygon", "Variant(String, UInt8)", "Array(Variant(Int64, String))",
-        "Variant(LowCardinality(String), Tuple(UInt8, String))", "Geometry",
+        "Variant(LowCardinality(String), Tuple(UInt8, String))", "Geometry", "Dynamic",
+        "Array(Dynamic)",
+        "Tuple(Dynamic(max_types=3), Variant(String, UInt8))",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -445,6 +458,11 @@ version (unittest)
         }
         else if (auto lc = cast(LowCardinalityColumn) c)
             fill(lc.values);
+        else if (auto d = cast(DynamicColumn) c)
+        {
+            d.appendTyped("Map(String, UInt8)", (e) { e.appendString("{'k':1}"); });
+            d.appendNull();
+        }
         else if (auto v = cast(VariantColumn) c)
         {
             // Rows: the second alternative, then NULL (unused alternatives stay empty)

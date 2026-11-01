@@ -10,6 +10,10 @@ All notable changes to this project are documented here. The project follows [Se
 - **`Geometry`**, the Variant of the geo types (newer servers), and the **`MultiPoint`** geo type (`Array(Point)`).
 - `std.variant.Variant` maps to any column in struct mapping, `readValue` and inserts (`appendVariant`): the value of `getVariant`, NULL as an empty `Variant`. `readValue` reads a Variant cell as the D type of its held value.
 
+- **`Dynamic`** (#30): `DynamicColumn` keeps the values as a `VariantColumn` whose alternatives are the types of the block; `dynamicTypeName(row)` is the server's `dynamicType()`. On servers 25.6 and newer the connection asks for the flattened form (`output_format_native_use_flattened_dynamic_and_json_serialization`), so every value is readable; older servers (or `simpleNativeFormats = false`) send the V1 form, where values beyond `max_types` are binary-encoded: they can be copied to another table but reading one throws. Values are written in the V1 form, which every server accepts. Appends infer the type as the server does for inserted text (`Int64`, `UInt64`, `Float64`, `Bool`, `String`, `Date`/`Date32`, `DateTime`/`DateTime64(9)`, `UUID`); `appendValue` derives it from the D type (`Array(...)`, `Map(...)`, a named `Tuple` for a struct, `Decimal(P, S)`, `IPv4`, ...); `appendTyped` takes it explicitly.
+- `ConnectionOptions.simpleNativeFormats` (DSN `simple_native_formats`, default on): request the client-friendly native forms of new types from servers that have them.
+- The type parser accepts named parameters such as `max_types=2`.
+
 ### Changed
 - `Connection.query!T`, `queryRow!T`, `queryValue!T`, `insert` and `RowRange` infer their attributes instead of being marked `@safe`, so structs with a `std.variant.Variant` field (whose copying is `@system`) work; for other structs they are still `@safe`. `appendValue` takes its value by `auto ref`.
 
