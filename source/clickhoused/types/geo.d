@@ -1,6 +1,7 @@
 /++
-Geo types: `Point`, `Ring`, `LineString`, `MultiLineString`, `Polygon` and
-`MultiPolygon`.
+Geo types: `Point`, `Ring`, `LineString`, `MultiLineString`, `Polygon`,
+`MultiPolygon` and `MultiPoint` (and `Geometry`, a Variant of them, in
+`clickhoused.types.variant`).
 
 They are named aliases of Tuple and Array types (`Point` is
 `Tuple(Float64, Float64)`, `Polygon` is `Array(Array(Point))`, ...), sent
@@ -22,7 +23,7 @@ mapping, `readValue` and inserts; arrays of it map to the other geo types:
 $(TABLE
     $(TR $(TH ClickHouse) $(TH D))
     $(TR $(TD `Point`) $(TD `GeoPoint`))
-    $(TR $(TD `Ring`, `LineString`) $(TD `GeoPoint[]`))
+    $(TR $(TD `Ring`, `LineString`, `MultiPoint`) $(TD `GeoPoint[]`))
     $(TR $(TD `Polygon`, `MultiLineString`) $(TD `GeoPoint[][]`))
     $(TR $(TD `MultiPolygon`) $(TD `GeoPoint[][][]`))
 )
@@ -44,6 +45,7 @@ package string geoUnderlyingType(string name) @safe pure nothrow @nogc
         return "Tuple(Float64, Float64)";
     case "Ring":
     case "LineString":
+    case "MultiPoint":
         return "Array(Point)";
     case "Polygon":
     case "MultiLineString":

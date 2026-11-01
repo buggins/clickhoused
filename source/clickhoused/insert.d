@@ -24,9 +24,12 @@ import core.time : Duration;
 import std.bigint : BigInt, toDecimalString;
 import std.datetime.date : Date, TimeOfDay;
 import std.datetime.systime : SysTime;
-import std.traits : isAssociativeArray, isDynamicArray, isFloatingPoint, isIntegral, isSigned, isSomeString;
+import std.traits : isAssociativeArray, isDynamicArray, isFloatingPoint, isInstanceOf, isIntegral, isSigned,
+    isSomeString;
+import std.meta : AliasSeq;
 import std.typecons : Nullable;
 import std.uuid : UUID;
+import std.variant : Variant;
 
 import clickhoused.block : Block, readBlock, writeBlock;
 import clickhoused.connection : Connection, QueryStats;
@@ -142,7 +145,8 @@ final class Inserter
     `std.datetime.TimeOfDay` (for `Time` and `Time64`), `std.uuid.UUID`,
     D enums (stored by member name), `Int128`/`UInt128`/`Int256`/`UInt256`,
     `std.bigint.BigInt`, `Decimal`, `IPv4`, `IPv6`, structs and `std.typecons.Tuple` (for
-    `Tuple` columns), associative arrays (for `Map` columns), `null`, `std.typecons.Nullable`, and
+    `Tuple` columns), associative arrays (for `Map` columns), `std.variant.Variant` (its held value,
+    see `appendVariant`), `null`, `std.typecons.Nullable`, and
     dynamic arrays of these for `Array` columns (`[1, 2]`, `["a"]`, `[[1], []]`).
     Values are converted to the column types with range checks.
 
@@ -427,6 +431,26 @@ final class Inserter
 }
 
 /++
+Appends the value held by `value` as `appendValue` does for its D type: an
+empty `Variant` as NULL, integers, floating-point numbers, `bool`, strings,
+`Date`, `SysTime`, `UUID`, `Duration` and `TimeOfDay`.
+
+Throws: `ClientException` for other held types.
++/
+void appendVariant(Column column, Variant value) @trusted
+{
+    // std.variant is not annotated @safe; peeking at a held value is memory-safe
+    if (!value.hasValue)
+        return column.appendNull();
+    static foreach (V; AliasSeq!(long, int, short, byte, ulong, uint, ushort, ubyte, double, float, bool, string,
+            const(char)[], Date, SysTime, UUID, Duration, TimeOfDay))
+        if (auto p = value.peek!V)
+            return appendValue(column, *p);
+    throw new ClientException("Cannot store a Variant holding " ~ value.type.toString() ~ " in column '"
+            ~ column.name ~ "' (" ~ column.typeName ~ ")");
+}
+
+/++
 Quotes a column or table name for use in SQL: `name` becomes `` `name` ``.
 Backquotes and backslashes inside the name are escaped.
 +/
@@ -450,14 +474,27 @@ string quoteIdentifier(string name) @safe pure
 }
 
 /// Appends `value` to `column` using the appender for its D type.
-void appendValue(T)(Column column, T value) @safe
+void appendValue(T)(Column column, auto ref T value) @safe
 {
     import std.conv : to;
     import std.traits : Unqual;
 
     alias U = Unqual!T;
+    // Values without a typed Column append go to the Variant alternative that takes them, not to its String
+    static if (!(is(U == typeof(null)) || isInstanceOf!(Nullable, U) || is(U == Variant) || is(U == enum)
+            || is(U == bool) || isIntegral!U || isFloatingPoint!U || isSomeString!U || is(U
+            : const(ubyte)[])
+            || is(U == Date) || is(U == SysTime) || is(U == UUID) || is(U == Duration) || is(U == TimeOfDay)))
+    {
+        import clickhoused.types.variant : VariantColumn;
+
+        if (auto variant = cast(VariantColumn) column)
+            return variant.appendToAny((Column c) => appendValue(c, value));
+    }
     static if (is(U == typeof(null)))
         column.appendNull();
+    else static if (is(U == Variant))
+        (() @trusted => appendVariant(column, value))(); // copying a Variant is memory-safe
     else static if (is(U : Nullable!V, V))
     {
         if (value.isNull)
@@ -495,7 +532,7 @@ void appendValue(T)(Column column, T value) @safe
         const before = array.elements.length;
         scope (failure)
             array.elements.truncate(before); // leave the column as it was
-        foreach (element; value)
+        foreach (ref element; value)
             appendValue(array.elements, element);
         array.endRow();
     }
@@ -584,10 +621,16 @@ void appendValue(T)(Column column, T value) @safe
         static assert(0, "Cannot insert values of type " ~ T.stringof);
 }
 
-private size_t estimateSize(T)(T value) @safe pure nothrow
+private size_t estimateSize(T)(auto ref T value) @safe pure nothrow
 {
+    import std.traits : Unqual;
+
     static if (is(T == typeof(null)))
         return 1;
+    else static if (is(Unqual!T == Variant))
+        return 16; // std.variant is neither pure nor nothrow
+    else static if (isDynamicArray!T && is(Unqual!(typeof(T.init[0])) == Variant))
+        return 8 + value.length * 16;
     else static if (is(T : const(char)[]) || is(T : const(ubyte)[]))
         return value.length + 8;
     else static if (isAssociativeArray!T)
@@ -595,7 +638,7 @@ private size_t estimateSize(T)(T value) @safe pure nothrow
     else static if (isDynamicArray!T)
     {
         size_t size = 8;
-        foreach (element; value)
+        foreach (ref element; value)
             size += estimateSize(element);
         return size;
     }

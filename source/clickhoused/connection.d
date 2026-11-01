@@ -333,7 +333,7 @@ final class Connection
     Returns: an input range of `T`; the connection is busy until it is
     exhausted or closed.
     +/
-    RowRange!T query(T)(string sql, const string[string] settings = null, const string[string] parameters = null) @safe
+    RowRange!T query(T)(string sql, const string[string] settings = null, const string[string] parameters = null)
             if (is(T == struct))
     {
         return RowRange!T(query(sql, settings, parameters));
@@ -344,7 +344,7 @@ final class Connection
 
     Throws: `ClientException` if the query returns no rows.
     +/
-    T queryRow(T)(string sql, const string[string] settings = null, const string[string] parameters = null) @safe
+    T queryRow(T)(string sql, const string[string] settings = null, const string[string] parameters = null)
             if (is(T == struct))
     {
         auto rows = query!T(sql, settings, parameters);
@@ -362,7 +362,7 @@ final class Connection
 
     Throws: `ClientException` if the query returns no rows or the value does not convert to `T`.
     +/
-    T queryValue(T)(string sql, const string[string] settings = null, const string[string] parameters = null) @safe
+    T queryValue(T)(string sql, const string[string] settings = null, const string[string] parameters = null)
     {
         import clickhoused.mapping : readValue;
 
@@ -383,8 +383,7 @@ final class Connection
 
     Returns: statistics of the insert.
     +/
-    QueryStats insert(R)(string table, R rows, const string[string] settings = null) @safe
-            if (!is(R : Block))
+    QueryStats insert(R)(string table, R rows, const string[string] settings = null) if (!is(R : Block))
     {
         import clickhoused.mapping : columnNames;
         import std.range : ElementType;

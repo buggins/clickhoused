@@ -21,6 +21,7 @@ import clickhoused.types.parser : TypeArgKind, TypeNode, parseType;
 import clickhoused.types.string;
 import clickhoused.types.time : Time64Column, TimeColumn;
 import clickhoused.types.tuple : TupleColumn;
+import clickhoused.types.variant : VariantColumn, geometryUnderlyingType;
 import clickhoused.types.wideint;
 
 /++
@@ -201,7 +202,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             throw invalid();
         const nestedType = type.args[0].type;
         if (nestedType.name == "Nullable" || nestedType.name == "Array" || nestedType.name == "LowCardinality"
-                || nestedType.name == "Tuple" || nestedType.name == "Map" || nestedType.name == "Nested")
+                || nestedType.name == "Tuple" || nestedType.name == "Map" || nestedType.name == "Nested"
+                || nestedType.name == "Variant")
             throw invalid();
         auto nested = createColumn(name, nestedType.toString(), nestedType, defaultTimezone);
         return new NullableColumn(name, typeName, nested);
@@ -216,7 +218,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             throw invalid();
         const innerType = type.args[0].type;
         if (innerType.name == "LowCardinality" || innerType.name == "Array" || innerType.name == "Tuple"
-                || innerType.name == "Map" || innerType.name == "Nested")
+                || innerType.name == "Map" || innerType.name == "Nested" || innerType.name == "Variant")
             throw invalid();
         // The dictionary holds the inner type without Nullable: NULL is index 0
         const keyType = innerType.name == "Nullable" ? innerType.args[0].type : innerType;
@@ -258,6 +260,22 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         auto keys = createColumn(name, type.args[0].type.toString(), type.args[0].type, defaultTimezone);
         auto mapValues = createColumn(name, type.args[1].type.toString(), type.args[1].type, defaultTimezone);
         return new MapColumn(name, typeName, keys, mapValues);
+    case "Variant":
+        // The alternatives in the order of the type name, which numbers them
+        if (type.args.length == 0 || type.args.length >= VariantColumn.nullDiscriminator)
+            throw invalid();
+        Column[] alternatives;
+        foreach (ref arg; type.args)
+        {
+            if (arg.kind != TypeArgKind.type || arg.type.name == "Nullable")
+                throw invalid();
+            alternatives ~= createColumn(name, arg.type.toString(), arg.type, defaultTimezone);
+        }
+        return new VariantColumn(name, typeName, alternatives);
+    case "Geometry":
+        if (type.args.length != 0)
+            throw invalid();
+        return createColumn(name, typeName, parseType(geometryUnderlyingType), defaultTimezone);
     case "Nothing":
         return new NothingColumn(name, typeName);
     default:
@@ -316,7 +334,12 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
 
     assert(cast(UInt8Column)(cast(ArrayColumn) createColumn("a", "Array(UInt8)")).elements !is null);
     assert(cast(MapColumn) createColumn("m", "Map(String, Array(UInt8))") !is null);
-    assertThrown!ClientException(createColumn("x", "Variant(String, UInt8)"));
+    assertThrown!ClientException(createColumn("x", "Dynamic"));
+    assertThrown!ProtocolException(createColumn("x", "Variant(Nullable(String))"));
+    assertThrown!ProtocolException(createColumn("x", "Nullable(Variant(String))"));
+    auto geometry = cast(VariantColumn) createColumn("g", "Geometry");
+    assert(geometry.typeName == "Geometry" && geometry.variants.length == 7);
+    assert(geometry.variants[3].typeName == "Point");
     assertThrown!ClientException(createColumn("x", "Array(JSON)"));
     assertThrown!ProtocolException(createColumn("x", "Map(String)"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(Map(String, UInt8))"));
@@ -363,7 +386,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Tuple(Int64, String)", "Tuple(a Array(Date), b Nullable(String))",
         "Array(Tuple(LowCardinality(String), UInt8))", "Nested(a UInt8, b Array(String))",
         "Map(String, Int64)", "Map(LowCardinality(String), Array(Nullable(String)))",
-        "Point", "Polygon", "MultiPolygon",
+        "Point", "Polygon", "MultiPolygon", "Variant(String, UInt8)", "Array(Variant(Int64, String))",
+        "Variant(LowCardinality(String), Tuple(UInt8, String))", "Geometry",
     ];
     auto t = new MockTransport;
     auto w = new BufferedWriter(t);
@@ -421,6 +445,12 @@ version (unittest)
         }
         else if (auto lc = cast(LowCardinalityColumn) c)
             fill(lc.values);
+        else if (auto v = cast(VariantColumn) c)
+        {
+            // Rows: the second alternative, then NULL (unused alternatives stay empty)
+            v.appendTo(1, (e) { e.appendDefault(); });
+            v.appendNull();
+        }
         else if (auto a = cast(ArrayColumn) c)
         {
             if (cast(NothingColumn) a.elements)

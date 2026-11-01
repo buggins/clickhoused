@@ -31,4 +31,5 @@ public import clickhoused.types.parser;
 public import clickhoused.types.string;
 public import clickhoused.types.time;
 public import clickhoused.types.tuple;
+public import clickhoused.types.variant;
 public import clickhoused.types.wideint;

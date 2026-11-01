@@ -177,14 +177,15 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 | `Array(T)`, nested too | `ArrayColumn` | `T[]` (e.g. `long[]`, `string[][]`, `Nullable!int[]`) |
 | `Tuple(T1, ...)`, named too | `TupleColumn` | a struct or `std.typecons.Tuple` (by element name if named, else by position) |
 | `Map(K, V)` | `MapColumn` | `V[K]`, or `Tuple!(K, V)[]` to keep order and repeated keys |
-| `Point`, `Ring`, `LineString`, `MultiLineString`, `Polygon`, `MultiPolygon` | `TupleColumn`, `ArrayColumn` | `GeoPoint`, `GeoPoint[]`, `GeoPoint[][]`, `GeoPoint[][][]` |
+| `Point`, `Ring`, `LineString`, `MultiLineString`, `Polygon`, `MultiPolygon`, `MultiPoint` | `TupleColumn`, `ArrayColumn` | `GeoPoint`, `GeoPoint[]`, `GeoPoint[][]`, `GeoPoint[][][]` |
+| `Variant(T1, ...)`, `Geometry` | `VariantColumn` (`discriminators` plus a column per alternative) | `std.variant.Variant` (NULL as an empty one), or the D type of the held value |
 | `Nested(a T, b U)` | with `flatten_nested = 1` (the default): separate `Array` columns `n.a`, `n.b`; with `flatten_nested = 0`: `ArrayColumn` of a named `TupleColumn` | `T[]` per column (`@column("n.a")`), or an array of structs with fields `a`, `b` |
 | `LowCardinality(T)`, also in arrays | `LowCardinalityColumn`; `block.column!StringColumn(...)` etc. return its decoded values | as for `T` |
 
 ## Limitations
 
 - TLS needs the system's OpenSSL; on macOS that is Homebrew's (the built-in LibreSSL is not used).
-- Not supported yet: `Variant`/`Dynamic`/`JSON` (and the `Geometry` type built on Variant). A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
+- Not supported yet: `Dynamic` and `JSON`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
 - On Windows, timezone names fall back to UTC (no system timezone database). The point in time stays correct.
 
 ## Building and testing
