@@ -201,7 +201,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             throw invalid();
         const nestedType = type.args[0].type;
         if (nestedType.name == "Nullable" || nestedType.name == "Array" || nestedType.name == "LowCardinality"
-                || nestedType.name == "Tuple" || nestedType.name == "Map")
+                || nestedType.name == "Tuple" || nestedType.name == "Map" || nestedType.name == "Nested")
             throw invalid();
         auto nested = createColumn(name, nestedType.toString(), nestedType, defaultTimezone);
         return new NullableColumn(name, typeName, nested);
@@ -216,7 +216,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             throw invalid();
         const innerType = type.args[0].type;
         if (innerType.name == "LowCardinality" || innerType.name == "Array" || innerType.name == "Tuple"
-                || innerType.name == "Map")
+                || innerType.name == "Map" || innerType.name == "Nested")
             throw invalid();
         // The dictionary holds the inner type without Nullable: NULL is index 0
         const keyType = innerType.name == "Nullable" ? innerType.args[0].type : innerType;
@@ -242,6 +242,16 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             elements ~= createColumn(name, arg.type.toString(), arg.type, defaultTimezone);
         }
         return new TupleColumn(name, typeName, elements, names);
+    case "Nested":
+        // Nested(a T, b U) (kept whole with flatten_nested = 0) is Array(Tuple(a T, b U)) on the wire
+        if (type.args.length == 0)
+            throw invalid();
+        foreach (ref arg; type.args)
+            if (arg.kind != TypeArgKind.namedType)
+                throw invalid();
+        const tupleType = "Tuple" ~ type.toString()["Nested".length .. $];
+        auto rows = createColumn(name, tupleType, parseType(tupleType), defaultTimezone);
+        return new ArrayColumn(name, typeName, rows);
     case "Map":
         if (type.args.length != 2 || type.args[0].kind != TypeArgKind.type || type.args[1].kind != TypeArgKind.type)
             throw invalid();
@@ -257,6 +267,38 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
                 return createColumn(name, typeName, parseType(underlying), defaultTimezone);
         throw new ClientException("Unsupported column type '" ~ typeName ~ "' (column '" ~ name ~ "')");
     }
+}
+
+// Nested (kept whole with flatten_nested = 0): golden bytes from
+// `SELECT n FROM t FORMAT Native` for n Nested(a UInt8, b String) = [(1,'x'),(2,'y')]
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+    import clickhoused.io.mock : MockTransport;
+
+    const bytes = cast(const(ubyte)[])[2, 0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 'x', 1, 'y'];
+    auto t = new MockTransport;
+    t.feed(bytes);
+    auto n = cast(ArrayColumn) createColumn("n", "Nested(a UInt8, b String)");
+    n.readData(new BufferedReader(t), 1);
+    assert(n.typeName == "Nested(a UInt8, b String)" && n.getString(0) == "[(1,'x'),(2,'y')]");
+    auto rows = cast(TupleColumn) n.elements;
+    assert(rows.typeName == "Tuple(a UInt8, b String)" && rows.names == ["a", "b"]);
+    assert((cast(UInt8Column) rows.elements[0]).data == [1, 2]);
+    auto w = new MockTransport;
+    auto writer = new BufferedWriter(w);
+    n.writeData(writer);
+    writer.flush();
+    assert(w.written == bytes);
+
+    // Nested inside Nested, and invalid forms
+    auto deep = cast(ArrayColumn) createColumn("d", "Nested(id UInt32, tags Nested(k String, v Float64))");
+    auto inner = cast(ArrayColumn)(cast(TupleColumn) deep.elements).elements[1];
+    assert(inner.typeName == "Nested(k String, v Float64)" && cast(TupleColumn) inner.elements !is null);
+    assertThrown!ProtocolException(createColumn("x", "Nested(UInt8, String)"));
+    assertThrown!ProtocolException(createColumn("x", "Nested"));
+    assertThrown!ProtocolException(createColumn("x", "Nullable(Nested(a UInt8))"));
 }
 
 @safe unittest
@@ -319,7 +361,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         "Decimal(9, 2)", "Decimal(18, 0)", "Decimal(38, 10)", "Decimal(76, 76)",
         "Nullable(Decimal(20, 3))", "IPv4", "IPv6", "Array(Nullable(IPv6))",
         "Tuple(Int64, String)", "Tuple(a Array(Date), b Nullable(String))",
-        "Array(Tuple(LowCardinality(String), UInt8))",
+        "Array(Tuple(LowCardinality(String), UInt8))", "Nested(a UInt8, b Array(String))",
         "Map(String, Int64)", "Map(LowCardinality(String), Array(Nullable(String)))",
         "Point", "Polygon", "MultiPolygon",
     ];

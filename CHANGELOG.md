@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
+## Unreleased
+
+### Added
+- **`Nested(...)` columns kept whole** (#22): with `flatten_nested = 0` a Nested column keeps its type `Nested(a T, b U)` and is read and written as an array of named tuples (on the wire it is exactly `Array(Tuple(a T, b U))`), so it maps to arrays of structs. With the default `flatten_nested = 1` the server splits it into the `Array` columns `n.a`, `n.b`, which already worked; struct fields map to them with `@column("n.a")`, and the server rejects rows whose arrays differ in length.
+
 ## 0.4.0 — 2026-11-01
 
 More column types (#19–#21 from the split of #8; tracking issue #10) and exact float text.

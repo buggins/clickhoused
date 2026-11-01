@@ -24,6 +24,7 @@ import integrationtests.ip;
 import integrationtests.lowcardinality;
 import integrationtests.map;
 import integrationtests.mapping;
+import integrationtests.nested;
 import integrationtests.pool;
 import integrationtests.server : serverConfigured, tlsConfigured;
 import integrationtests.smoke;
@@ -113,6 +114,8 @@ immutable TestCase[] allTests = [
     TestCase("BFloat16: insert and struct mapping", &testBFloat16Insert, true),
     TestCase("Time/Time64: read", &testTimeRead, true),
     TestCase("Time/Time64: insert and struct mapping", &testTimeInsert, true),
+    TestCase("Nested: flatten_nested = 1", &testNestedFlattened, true),
+    TestCase("Nested: flatten_nested = 0", &testNestedWhole, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),
