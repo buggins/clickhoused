@@ -232,3 +232,13 @@ Inserting row by row now runs at about 20 million rows/s (whole blocks: about 50
 | cells/getSysTime DateTime64(3, Europe/Lisbon) (new case) | 21.7–26.8 | 13.1–13.6 | 1.7–2.0x |
 
 `query!T` now runs at about 12–15 million rows/s (reading the same columns directly: about 40 million). Columns with a timezone other than UTC used to pay a hash lookup per cell; UTC columns were already fast.
+
+### Float text (#50)
+
+The shortest-digit search behind `getString` of `Float32`/`Float64` (Steele and White's free-format algorithm, #24) runs on a checked 128-bit integer type when its numbers fit (nearly every `Float32`, doubles from about 1e-20 to 1e35), and falls back to `BigInt` otherwise; digits go into a stack buffer. Same algorithm, same text: checked again against the server's `toString()` on the 765,536 values of #24 (no mismatches), and a unit test compares both paths on thousands of values. Three alternating rounds, 100,000 values, min times (the machine was under heavy load, load average 12–14, so the absolute times are high):
+
+| case | before ms | after ms | speed-up | alloc B/row |
+|---|---:|---:|---:|---:|
+| cells/getString Float64 | 2,545–6,590 | 237–508 | 7–22x | 3,166 → 87 |
+
+On the random bit patterns of the server check, where most values have extreme exponents and take the BigInt fallback, the whole check is about 1.35 times faster.
