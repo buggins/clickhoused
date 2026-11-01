@@ -23,7 +23,7 @@ clickhoused is on [code.dlang.org](https://code.dlang.org/packages/clickhoused).
 
 ```json
 "dependencies": {
-    "clickhoused": "~>0.5.0"
+    "clickhoused": "~>0.6.0"
 }
 ```
 
