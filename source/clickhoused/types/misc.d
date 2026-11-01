@@ -26,6 +26,7 @@ final class UUIDColumn : Column
 {
     /// Column values.
     UUID[] data;
+    private UUID[] spare; // room for appends; see `appendFast`
 
     /// Creates an empty column.
     this(string name, string typeName = "UUID") @safe pure nothrow
@@ -91,7 +92,7 @@ final class UUIDColumn : Column
 
     override void appendDefault() @safe
     {
-        data ~= UUID.init;
+        appendFast(data, spare, UUID.init);
     }
 
     override void truncate(size_t length) @safe
@@ -102,12 +103,12 @@ final class UUIDColumn : Column
 
     override void appendFrom(const Column source, size_t row) @safe
     {
-        data ~= sameKind!UUIDColumn(source).data[row];
+        appendFast(data, spare, sameKind!UUIDColumn(source).data[row]);
     }
 
     override void appendUUID(UUID value) @safe
     {
-        data ~= value;
+        appendFast(data, spare, value);
     }
 
     /// Parses the canonical form.
@@ -116,7 +117,7 @@ final class UUIDColumn : Column
         import std.uuid : UUIDParsingException;
 
         try
-            data ~= UUID(value);
+            appendFast(data, spare, UUID(value));
         catch (UUIDParsingException)
             throw appendError("string", value);
     }
@@ -234,14 +235,14 @@ final class EnumColumn(T) : FixedColumn!T if (is(T == byte) || is(T == short))
         foreach (v; labels.byKey)
             if (v < smallest)
                 smallest = v;
-        data ~= labels.length ? smallest : 0;
+        push(labels.length ? smallest : 0);
     }
 
     /// Appends the value of the label `value`.
     override void appendString(string value) @safe
     {
         if (auto v = value in values)
-            data ~= *v;
+            push(*v);
         else
             throw appendError("string", value);
     }
@@ -251,7 +252,7 @@ final class EnumColumn(T) : FixedColumn!T if (is(T == byte) || is(T == short))
     {
         if (value < T.min || value > T.max || (cast(T) value) !in labels)
             throw appendError("long", value);
-        data ~= cast(T) value;
+        push(cast(T) value);
     }
 }
 
@@ -280,6 +281,13 @@ final class NullableColumn : Column
 {
     /// NULL flag of each row.
     bool[] nulls;
+    private bool[] spareNulls; // room for appends; see `appendFast`
+
+    /// Appends a NULL flag alone, for a value appended to `nested` by the caller.
+    package(clickhoused) void appendFlag(bool isNull) @safe pure nothrow
+    {
+        appendFast(nulls, spareNulls, isNull);
+    }
     /// Values; meaningful only where `nulls` is false.
     Column nested;
 
@@ -415,7 +423,7 @@ final class NullableColumn : Column
     {
         auto other = sameKind!NullableColumn(source);
         nested.appendFrom(other.nested, row);
-        nulls ~= other.nulls[row];
+        appendFast(nulls, spareNulls, other.nulls[row]);
     }
 
     override void readStatePrefix(BufferedReader reader) @safe
@@ -431,67 +439,67 @@ final class NullableColumn : Column
     override void appendNull() @safe
     {
         nested.appendDefault();
-        nulls ~= true;
+        appendFast(nulls, spareNulls, true);
     }
 
     override void appendLong(long value) @safe
     {
         nested.appendLong(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendUlong(ulong value) @safe
     {
         nested.appendUlong(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendDouble(double value) @safe
     {
         nested.appendDouble(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendBool(bool value) @safe
     {
         nested.appendBool(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendString(string value) @safe
     {
         nested.appendString(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendBytes(const(ubyte)[] value) @safe
     {
         nested.appendBytes(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendDate(Date value) @safe
     {
         nested.appendDate(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendSysTime(SysTime value) @safe
     {
         nested.appendSysTime(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendUUID(UUID value) @safe
     {
         nested.appendUUID(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     override void appendDuration(Duration value) @safe
     {
         nested.appendDuration(value);
-        nulls ~= false;
+        appendFast(nulls, spareNulls, false);
     }
 
     private void checkNotNull(size_t row) const @safe

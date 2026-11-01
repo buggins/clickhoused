@@ -10,7 +10,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException, ProtocolException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : Column, makeVariant, readChunkRows, readFixedValues, writeFixedValues;
+import clickhoused.types.column : appendFast, Column, makeVariant, readChunkRows, readFixedValues, writeFixedValues;
 import clickhoused.types.textlist : parseTextList;
 
 /++
@@ -24,6 +24,7 @@ final class ArrayColumn : Column
 {
     /// End of each row in `elements`: cumulative element counts.
     ulong[] offsets;
+    private ulong[] spareOffsets; // room for appends; see `appendFast`
     /// The elements of all rows, in order.
     Column elements;
 
@@ -160,13 +161,13 @@ final class ArrayColumn : Column
     /// Appends an empty array.
     override void appendDefault() @safe
     {
-        offsets ~= elements.length;
+        appendFast(offsets, spareOffsets, elements.length);
     }
 
     /// Ends a row made of the elements appended since the previous row.
     void endRow() @safe
     {
-        offsets ~= elements.length;
+        appendFast(offsets, spareOffsets, elements.length);
     }
 
     /// Appends the bytes as an array of numbers.

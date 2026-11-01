@@ -10,7 +10,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : Column, FixedColumn, makeVariant, readChunkRows;
+import clickhoused.types.column : appendFast, Column, FixedColumn, makeVariant, readChunkRows;
 
 /++
 An IPv4 address. `value` is the address as a number: `1.2.3.4` is
@@ -378,13 +378,13 @@ final class IPv4Column : FixedColumn!uint
 
     override void appendDefault() @safe
     {
-        data ~= 0;
+        push(0);
     }
 
     /// Appends an address.
     void appendIPv4(IPv4 address) @safe
     {
-        data ~= address.value;
+        push(address.value);
     }
 
     /// The address as a number.
@@ -392,7 +392,7 @@ final class IPv4Column : FixedColumn!uint
     {
         if (value > uint.max)
             throw appendError("ulong", value);
-        data ~= cast(uint) value;
+        push(cast(uint) value);
     }
 
     /// ditto
@@ -400,7 +400,7 @@ final class IPv4Column : FixedColumn!uint
     {
         if (value < 0 || value > uint.max)
             throw appendError("long", value);
-        data ~= cast(uint) value;
+        push(cast(uint) value);
     }
 
     /// Four address bytes, most significant first.
@@ -408,14 +408,14 @@ final class IPv4Column : FixedColumn!uint
     {
         if (value.length != 4)
             throw appendError("bytes", value.length);
-        data ~= value[0] << 24 | value[1] << 16 | value[2] << 8 | value[3];
+        push(value[0] << 24 | value[1] << 16 | value[2] << 8 | value[3]);
     }
 
     /// Parses dotted-decimal text.
     override void appendString(string value) @safe
     {
         try
-            data ~= IPv4.fromString(value).value;
+            push(IPv4.fromString(value).value);
         catch (ClientException)
             throw appendError("string", value);
     }
@@ -426,6 +426,7 @@ final class IPv6Column : Column
 {
     /// Column values.
     IPv6[] data;
+    private IPv6[] spare; // room for appends; see `appendFast`
 
     /// Creates an empty column.
     this(string name, string typeName = "IPv6") @safe pure nothrow
@@ -493,13 +494,13 @@ final class IPv6Column : Column
     /// Appends `::`.
     override void appendDefault() @safe
     {
-        data ~= IPv6.init;
+        appendFast(data, spare, IPv6.init);
     }
 
     /// Appends an address.
     void appendIPv6(IPv6 address) @safe
     {
-        data ~= address;
+        appendFast(data, spare, address);
     }
 
     /// 16 address bytes.
@@ -509,21 +510,21 @@ final class IPv6Column : Column
             throw appendError("bytes", value.length);
         IPv6 address;
         address.bytes[] = value[];
-        data ~= address;
+        appendFast(data, spare, address);
     }
 
     /// Parses IPv6 text; IPv4 text gives the IPv4-mapped address.
     override void appendString(string value) @safe
     {
         try
-            data ~= IPv6.fromString(value);
+            appendFast(data, spare, IPv6.fromString(value));
         catch (ClientException)
             throw appendError("string", value);
     }
 
     override void appendFrom(const Column source, size_t row) @safe
     {
-        data ~= sameKind!IPv6Column(source).data[row];
+        appendFast(data, spare, sameKind!IPv6Column(source).data[row]);
     }
 }
 

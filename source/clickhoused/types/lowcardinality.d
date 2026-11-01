@@ -121,7 +121,7 @@ final class LowCardinalityColumn : Column
                     else
                     {
                         nullable.nested.appendFrom(keys, cast(size_t) index);
-                        nullable.nulls ~= false;
+                        nullable.appendFlag(false);
                     }
                 }
                 done += n;

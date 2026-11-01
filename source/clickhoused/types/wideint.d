@@ -18,7 +18,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : Column, makeVariant, readChunkRows;
+import clickhoused.types.column : appendFast, Column, makeVariant, readChunkRows;
 
 /// Whether `std.int128` is available (D frontend 2.100 and newer).
 enum bool haveStdInt128 = __traits(compiles, () { import std.int128 : Int128; });
@@ -420,6 +420,13 @@ final class WideIntColumn(W) : Column if (isWideInt!W)
 {
     /// Column values.
     W[] data;
+    private W[] spare; // room for appends; see `appendFast`
+
+    /// Appends `value`.
+    void appendWide(W value) @safe pure nothrow
+    {
+        appendFast(data, spare, value);
+    }
 
     /// Creates an empty column.
     this(string name, string typeName) @safe pure nothrow
@@ -507,20 +514,20 @@ final class WideIntColumn(W) : Column if (isWideInt!W)
 
     override void appendDefault() @safe
     {
-        data ~= W.init;
+        appendFast(data, spare, W.init);
     }
 
     override void appendLong(long value) @safe
     {
         try
-            data ~= W(value);
+            appendFast(data, spare, W(value));
         catch (ClientException)
             throw appendError("long", value);
     }
 
     override void appendUlong(ulong value) @safe
     {
-        data ~= W(value);
+        appendFast(data, spare, W(value));
     }
 
     /// Only whole numbers within the range of `long` or `ulong` are accepted.
@@ -540,21 +547,21 @@ final class WideIntColumn(W) : Column if (isWideInt!W)
 
     override void appendBool(bool value) @safe
     {
-        data ~= W(value ? 1 : 0);
+        appendFast(data, spare, W(value ? 1 : 0));
     }
 
     /// Parses decimal text.
     override void appendString(string value) @safe
     {
         try
-            data ~= W.fromString(value);
+            appendFast(data, spare, W.fromString(value));
         catch (ClientException)
             throw appendError("string", value);
     }
 
     override void appendFrom(const Column source, size_t row) @safe
     {
-        data ~= sameKind!WideIntColumn(source).data[row];
+        appendFast(data, spare, sameKind!WideIntColumn(source).data[row]);
     }
 }
 

@@ -17,7 +17,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : Column, makeVariant, readChunkRows;
+import clickhoused.types.column : appendFast, Column, makeVariant, readChunkRows;
 import clickhoused.types.wideint : Int128, Int256;
 
 /// Largest precision (and scale) of a ClickHouse decimal.
@@ -304,6 +304,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
 {
     /// The values times 10^`scale`, as on the wire.
     T[] data;
+    private T[] spare; // room for appends; see `appendFast`
     /// Precision: total number of digits.
     immutable uint precision;
     /// Scale: digits after the point.
@@ -439,7 +440,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
 
     override void appendDefault() @safe
     {
-        data ~= T.init;
+        appendFast(data, spare, T.init);
     }
 
     /++
@@ -458,7 +459,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
         const v = scaled.unscaled;
         if (v > maxUnscaled || v < negativeMax())
             throw appendError("decimal", value);
-        data ~= narrow(v);
+        appendFast(data, spare, narrow(v));
     }
 
     override void appendLong(long value) @safe
@@ -503,7 +504,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
         auto other = sameKind!DecimalColumn(source);
         if (other.scale != scale || other.precision != precision)
             throw new ClientException("Column '" ~ name ~ "': cannot copy values of a different decimal type");
-        data ~= other.data[row];
+        appendFast(data, spare, other.data[row]);
     }
 
     private Int256 negativeMax() const @safe pure

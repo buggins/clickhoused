@@ -27,6 +27,7 @@ final class StringColumn : Column
 {
     /// Column values.
     string[] data;
+    private string[] spare; // room for appends; see `appendFast`
 
     /// Creates an empty column.
     this(string name, string typeName = "String") @safe pure nothrow
@@ -98,7 +99,7 @@ final class StringColumn : Column
 
     override void appendDefault() @safe
     {
-        data ~= "";
+        appendFast(data, spare, "");
     }
 
     override void truncate(size_t length) @safe
@@ -109,17 +110,17 @@ final class StringColumn : Column
 
     override void appendFrom(const Column source, size_t row) @safe
     {
-        data ~= sameKind!StringColumn(source).data[row];
+        appendFast(data, spare, sameKind!StringColumn(source).data[row]);
     }
 
     override void appendString(string value) @safe
     {
-        data ~= value;
+        appendFast(data, spare, value);
     }
 
     override void appendBytes(const(ubyte)[] value) @safe
     {
-        data ~= cast(string) value.idup;
+        appendFast(data, spare, cast(string) value.idup);
     }
 
     private T parse(T)(size_t row) const @safe

@@ -556,7 +556,7 @@ void appendValue(T)(Column column, auto ref T value) @safe
     else static if (isWideInt!U)
     {
         if (auto wide = cast(WideIntColumn!U) column)
-            wide.data ~= value;
+            wide.appendWide(value);
         else
             column.appendString(value.toString()); // other columns parse the decimal text, with range checks
     }
