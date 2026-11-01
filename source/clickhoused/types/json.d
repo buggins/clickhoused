@@ -18,7 +18,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException, ProtocolException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : Column, makeVariant, readChunkRows;
+import clickhoused.types.column : Column, growRows, makeVariant;
 
 /++
 `JSON` column: one JSON text per row, as the server writes it (`toString(j)`:
@@ -79,10 +79,17 @@ final class JsonColumn : Column
 
     override void readData(BufferedReader reader, size_t rows) @safe
     {
+        import clickhoused.io.buffer : StringArena;
+
         data = null;
-        data.reserve(rows < readChunkRows ? rows : readChunkRows);
-        foreach (i; 0 .. rows)
-            data ~= reader.readString();
+        StringArena arena;
+        while (data.length < rows)
+        {
+            const start = data.length;
+            data.length = growRows(start, rows);
+            foreach (ref value; data[start .. $])
+                value = reader.readString(arena);
+        }
     }
 
     override void writeData(BufferedWriter writer) const @safe

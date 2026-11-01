@@ -6,6 +6,7 @@ All notable changes to this project are documented here. The project follows [Se
 
 ### Changed
 - **LZ4 is much faster** (#40): decompression about 6–7 times (about 4 GB/s on the benchmark machine), compression about 2 times. SELECTs with `compression = lz4` read up to twice as fast. Same API and the same checks of malformed input. Benchmarks: `dub run :bench -b release`, results in `doc/benchmarks.md`.
+- **String columns decode 2.5–5 times faster** (#42), and so do `Array(String)`, `Map` keys, `Nullable(String)`, `Tuple`/`Variant`/`Dynamic` strings and `JSON`: values are read into shared buffers instead of one allocation each. A SELECT of typical columns runs about 4 times faster. `StringColumn.data` is still a `string[]`; a value kept alive keeps its shared buffer (up to 64 KB) alive.
 
 ## 0.5.0 — 2026-11-01
 

@@ -26,6 +26,22 @@ import clickhoused.io.buffer : BufferedReader, BufferedWriter, isFixedWireType;
 package enum size_t readChunkRows = 64 * 1024;
 
 /++
+Row counts up to which a column may allocate its rows at once: a broken stream
+can then cost at most this many rows of memory before the data runs out.
+Larger counts grow step by step (see `growRows`).
++/
+package enum size_t upfrontRows = 1024 * 1024;
+
+/// The next length of an array being filled with `rows` values, now holding `filled` of them.
+package size_t growRows(size_t filled, size_t rows) @safe pure nothrow @nogc
+{
+    if (rows <= upfrontRows)
+        return rows;
+    const step = filled > readChunkRows ? filled : readChunkRows; // doubles past the first step
+    return filled + (rows - filled < step ? rows - filled : step);
+}
+
+/++
 Base class of all columns.
 
 The typed getters convert the value of one cell. Each column type supports the
@@ -429,4 +445,15 @@ package Variant makeVariant(T)(T value) @trusted
 
     Unqual!T copy = value;
     return Variant(copy);
+}
+
+@safe unittest
+{
+    // Moderate row counts are allocated at once; huge ones grow from readChunkRows, doubling
+    assert(growRows(0, 1000) == 1000 && growRows(0, upfrontRows) == upfrontRows);
+    const huge = upfrontRows * 8;
+    assert(growRows(0, huge) == readChunkRows);
+    assert(growRows(readChunkRows, huge) == 2 * readChunkRows);
+    assert(growRows(4 * readChunkRows, huge) == 8 * readChunkRows);
+    assert(growRows(huge - 10, huge) == huge);
 }

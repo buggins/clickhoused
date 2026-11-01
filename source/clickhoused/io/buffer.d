@@ -23,6 +23,49 @@ enum size_t defaultBufferSize = 64 * 1024;
 /// Default limit for a single string received from the server (1 GiB).
 enum size_t defaultMaxStringLength = 1024 * 1024 * 1024;
 
+/++
+Storage for decoded strings: values are carved out of shared buffers, so
+decoding a column takes one allocation per buffer instead of one per value.
+The buffers start at `firstChunkSize` bytes and double up to `chunkSize`, so
+a column with little text wastes little; values longer than `chunkSize / 4`
+get their own allocation.
+
+A slice handed out keeps its whole buffer alive. The arena never writes to a
+region again once handed out, which is what makes the slices immutable.
++/
+package(clickhoused) struct StringArena
+{
+    /// Size of the largest shared buffers.
+    enum size_t chunkSize = 64 * 1024;
+    /// Size of the first buffer.
+    enum size_t firstChunkSize = 4 * 1024;
+
+    private ubyte[] chunk;
+    private size_t used;
+
+    /// A fresh region of `length` bytes, to be filled by the caller.
+    ubyte[] take(size_t length) @safe pure nothrow
+    {
+        import std.array : uninitializedArray;
+
+        if (length > chunkSize / 4)
+            return uninitializedArray!(ubyte[])(length);
+        if (chunk.length - used < length)
+        {
+            size_t size = chunk.length ? chunk.length * 2 : firstChunkSize;
+            if (size > chunkSize)
+                size = chunkSize;
+            while (size < length)
+                size *= 2;
+            chunk = uninitializedArray!(ubyte[])(size);
+            used = 0;
+        }
+        auto region = chunk[used .. used + length];
+        used += length;
+        return region;
+    }
+}
+
 /// True for the types that `BufferedReader.readFixed` and `BufferedWriter.writeFixed` accept.
 enum isFixedWireType(T) = isIntegral!T || isFloatingPoint!T || is(T == bool) || isSomeChar!T;
 
@@ -132,6 +175,22 @@ final class BufferedReader
     string readString() @safe
     {
         return cast(string) readBytes();
+    }
+
+    /++
+    Reads a length-prefixed string into `arena`: short strings share its
+    buffers, so a column of many values needs few allocations.
+
+    Throws: `ProtocolException` if the length exceeds `maxStringLength`.
+    +/
+    string readString(ref StringArena arena) @safe
+    {
+        const len = readUVarInt();
+        if (len > maxStringLength)
+            throw new ProtocolException("String length exceeds the limit");
+        auto bytes = arena.take(cast(size_t) len);
+        readExact(bytes);
+        return (() @trusted => cast(string) bytes)(); // the arena never hands out or writes these bytes again
     }
 
     /// Like `readString`, but returns the raw bytes.
@@ -360,4 +419,41 @@ ubyte[T.sizeof] toLittleEndian(T)(T value) @safe pure nothrow @nogc if (isFixedW
     assert(fromLittleEndian!short([0xFE, 0xFF]) == -2);
     assert(fromLittleEndian!double(toLittleEndian(1.5)) == 1.5);
     assert(toLittleEndian(true) == [1]);
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.io.mock : MockTransport;
+
+    // Strings read into an arena: short ones share a buffer, long ones get their own, limits still apply
+    auto t = new MockTransport;
+    auto w = new BufferedWriter(t);
+    string[] values = ["", "a", "hello", "x"];
+    char[] big;
+    big.length = StringArena.chunkSize / 4 + 1;
+    big[] = 'b';
+    values ~= big.idup;
+    foreach (i; 0 .. 2000)
+        values ~= "value" ~ cast(char)('0' + i % 10); // more than one buffer
+    foreach (v; values)
+        w.writeString(v);
+    w.flush();
+    t.feed(t.written);
+    auto r = new BufferedReader(t);
+    StringArena arena;
+    string[] got;
+    foreach (_; values)
+        got ~= r.readString(arena);
+    assert(got == values);
+    assert((() @trusted => got[1].ptr + 1 == got[2].ptr)()); // consecutive short values share a buffer
+
+    auto limited = new MockTransport;
+    auto lw = new BufferedWriter(limited);
+    lw.writeString("too long");
+    lw.flush();
+    limited.feed(limited.written);
+    auto lr = new BufferedReader(limited);
+    lr.maxStringLength = 4;
+    assertThrown!ProtocolException(lr.readString(arena));
 }
