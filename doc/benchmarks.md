@@ -191,3 +191,20 @@ String values are read into shared buffers (`StringArena`: 4 KB first, doubling 
 | query/per-cell getters | 114.0–120.9 | 41.4–41.8 | 2.8–2.9x | 56 → 52 |
 
 `LowCardinality(String)` is unchanged (its dictionary is small; the time goes into expanding it per row). The allocated bytes now are mostly the 16-byte slice per value; the ClickHouse-style layout (bytes plus offsets) would remove that, at the cost of an API change. A value kept alive keeps its shared buffer alive.
+
+### Bool, UUID, NULL maps, Float64 (#44)
+
+`Bool` values and NULL maps are read straight into the column (every non-zero byte becomes `true`) and written in one piece; `UUID` columns are read in one piece and converted in place (each 8-byte half reversed), and written in 64 KB chunks; fixed-width columns grow without first filling new elements with `T.init` (for `Float64`, an element-by-element `NaN` fill was the whole difference to `UInt64`). Two rounds, min times in ms (before: `main` with #42):
+
+| case | before ms | after ms | speed-up |
+|---|---:|---:|---:|
+| decode/Bool | 22.34–33.27 | 0.06–0.08 | ~400x |
+| decode/Nullable(Int64) | 23.26–34.62 | 0.31–0.35 | 75–100x |
+| decode/UUID | 42.52–56.23 | 1.20–1.70 | 33–35x |
+| decode/Float64 | 1.97–2.15 | 0.21–0.30 | 7–9x |
+| decode/Nullable(String) | 49.36–62.12 | 22.16–32.27 | 1.9–2.2x |
+| encode/Bool | 1.41–1.87 | 0.02–0.04 | 35–90x |
+| encode/UUID | 15.71–21.16 | 1.59–2.27 | 9–10x |
+| encode/Nullable(Int64) | 2.10–2.98 | 0.34–0.37 | 6–8x |
+
+The other cases are unchanged within noise (checked with alternating runs for `Map` and `Array`). The allocation counter now reports a few columns higher (e.g. `Array(UInt32)` 12 → 40 B/row): arrays used to grow in place, which `GC.allocatedInCurrentThread` does not count, and are now allocated once at their full size, which it does.
