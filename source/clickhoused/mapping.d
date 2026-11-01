@@ -4,7 +4,8 @@ Mapping between D structs and table rows.
 Fields map to columns of the same name; `@column("name")` maps a field to a
 differently named column, and `@ignore` leaves a field out. Supported field
 types: integers, floating-point numbers, `bool`, `string`, `ubyte[]`,
-`std.datetime.Date`, `std.datetime.SysTime`, `std.uuid.UUID`, D enums
+`std.datetime.Date`, `std.datetime.SysTime`, `core.time.Duration` and
+`std.datetime.TimeOfDay` (for `Time` and `Time64`), `std.uuid.UUID`, D enums
 (matched to `Enum8`/`Enum16` labels or numeric values by member name/value),
 and `std.typecons.Nullable` of these.
 
@@ -30,8 +31,9 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.mapping;
 
+import core.time : Duration;
 import std.bigint : BigInt;
-import std.datetime.date : Date;
+import std.datetime.date : Date, TimeOfDay;
 import std.datetime.systime : SysTime;
 import std.meta : AliasSeq;
 import std.traits : getUDAs, hasUDA, isAssociativeArray, isDynamicArray, isFloatingPoint, isIntegral, isSigned,
@@ -100,7 +102,8 @@ Whether values of type `T` can be read from and written to columns: numbers,
 `Int128`, `UInt128`, `Int256`, `UInt256`, `std.bigint.BigInt` (any integer
 column), `Decimal` (any numeric column), `IPv4`, `IPv6`, structs and
 `std.typecons.Tuple` (for `Tuple` columns, see `isTupleValue`), associative
-arrays `V[K]` (for `Map` columns), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `UUID`, D enums,
+arrays `V[K]` (for `Map` columns), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `Duration`,
+`TimeOfDay` (from 00:00:00 to 23:59:59), `UUID`, D enums,
 `std.typecons.Nullable` of these, and dynamic arrays of mappable values
 (for `Array` columns; `ubyte[]` stays the type for `String` bytes).
 +/
@@ -118,6 +121,7 @@ template isMappableValue(T)
     else
         enum isMappableValue = isIntegral!U || isFloatingPoint!U || is(U == bool) || is(U == string)
             || is(U == ubyte[]) || is(U == immutable(ubyte)[]) || is(U == Date) || is(U == SysTime) || is(U == UUID)
+            || is(U == Duration) || is(U == TimeOfDay)
             || is(U == enum) || isWideInt!U || is(U == BigInt) || is(U == Decimal) || is(U == IPv4)
             || is(U == IPv6);
 }
@@ -129,7 +133,8 @@ the structs that are values themselves (`Date`, `SysTime`, `Decimal`, ...).
 +/
 package template isTupleValue(T)
 {
-    static if (is(T == struct) && !is(T == Date) && !is(T == SysTime) && !is(T == UUID) && !isWideInt!T
+    static if (is(T == struct) && !is(T == Date) && !is(T == SysTime) && !is(T == UUID) && !is(T == Duration)
+            && !is(T == TimeOfDay) && !isWideInt!T
             && !is(T == BigInt) && !is(T == Decimal) && !is(T == IPv4) && !is(T == IPv6) && !is(T : Nullable!V, V))
         enum isTupleValue = () {
             bool all = true;
@@ -313,6 +318,17 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
             return column.getSysTime(row);
         else static if (is(U == UUID))
             return column.getUUID(row);
+        else static if (is(U == Duration))
+            return column.getDuration(row);
+        else static if (is(U == TimeOfDay))
+        {
+            import core.time : hours;
+
+            const span = column.getDuration(row);
+            if (span < Duration.zero || span >= 24.hours)
+                throw outOfRange!U(column);
+            return TimeOfDay(0, 0, 0) + span; // fractional seconds are dropped
+        }
         else static if (isTupleValue!U)
         {
             import clickhoused.types.tuple : TupleColumn;
@@ -756,4 +772,45 @@ private string columnList(Block block) @safe
     auto text = createColumn("s", "String");
     appendValue(text, "x");
     assertThrown!ClientException(readValue!(long[string])(text, 0));
+}
+
+@safe unittest
+{
+    import core.time : hours, minutes, msecs, seconds;
+    import std.exception : assertThrown;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.factory : createColumn;
+
+    // Time and Time64: Duration for any value, TimeOfDay from 00:00:00 to 23:59:59
+    static struct Shift
+    {
+        TimeOfDay start;
+        Duration length;
+        Nullable!Duration pause;
+    }
+
+    auto t = createColumn("t", "Time");
+    appendValue(t, TimeOfDay(9, 30, 0));
+    appendValue(t, -90.minutes);
+    appendValue(t, 25.hours);
+    assert(t.getString(0) == "09:30:00" && t.getString(1) == "-01:30:00" && t.getString(2) == "25:00:00");
+    assert(readValue!TimeOfDay(t, 0) == TimeOfDay(9, 30, 0) && readValue!Duration(t, 1) == -90.minutes);
+    assertThrown!ClientException(readValue!TimeOfDay(t, 1));
+    assertThrown!ClientException(readValue!TimeOfDay(t, 2));
+    assertThrown!ClientException(appendValue(t, 1000.hours));
+    assert(t.length == 3);
+
+    auto t3 = createColumn("t", "Nullable(Time64(3))");
+    appendValue(t3, 1500.msecs);
+    appendValue(t3, Nullable!Duration.init);
+    appendValue(t3, TimeOfDay(23, 59, 59));
+    assert(t3.getString(0) == "00:00:01.500" && t3.isNull(1) && t3.getString(2) == "23:59:59.000");
+    assert(readValue!(Nullable!Duration)(t3, 0).get == 1500.msecs && readValue!(Nullable!Duration)(t3, 1).isNull);
+    assert(readValue!TimeOfDay(t3, 0) == TimeOfDay(0, 0, 1)); // fraction dropped
+    assert(isMappableValue!Shift && !isTupleValue!Duration && !isTupleValue!TimeOfDay);
+    auto a = createColumn("a", "Array(Time)");
+    appendValue(a, [1.seconds, -2.seconds]);
+    assert(a.getString(0) == "['00:00:01','-00:00:02']" && readValue!(Duration[])(a, 0) == [
+        1.seconds, -2.seconds
+    ]);
 }

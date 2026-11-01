@@ -77,7 +77,7 @@ source/clickhoused/        library:
                            tuple.d (TupleColumn), map.d (MapColumn), geo.d (GeoPoint, geo type aliases), textlist.d (parsing [..], (..) and {k:v}
                            text for appendString),
                            numeric.d (+ BFloat16Column), floattext.d (formatFloat: server float text), string.d,
-                           datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
+                           datetime.d (+ resolveTimeZone), time.d (TimeColumn, Time64Column), misc.d (UUID, Enum, Nullable, Nothing),
                            parser.d (type-name parser), package.d (imports all)
   compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
                            `zstd` configuration only), frame.d (Compression enum, frames, CompressedInput/Output)
@@ -263,24 +263,26 @@ The first implementation supports **basic types only**:
 - `UUID`, `Enum8`/`Enum16`;
 - `Nullable(T)` of the types above.
 
-`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5), `Tuple` (#6) and `Map` (#7) are supported too. Everything else comes later (tracking issue #10):
-- Geo types, Variant/Dynamic/JSON.
+`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5), `Tuple` (#6), `Map` (#7), geo types (#19), `BFloat16` (#20) and `Time`/`Time64` (#21) are supported too. Everything else comes later (tracking issue #10):
+- Nested (#22), Variant/Dynamic/JSON (#9).
 
 These types are implemented (milestone M2). An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
 
 Column conventions:
 - Every column keeps its values raw, as on the wire, in a public array (`data`, or `bytes` for FixedString), and converts on access. For example, `DateTimeColumn.data` is `uint[]` epoch seconds, and `opIndex` returns a `SysTime`.
-- Every column implements the base `Column` getters that make sense for it: `getLong`, `getUlong`, `getDouble`, `getBool`, `getString`, `getBytes`, `getDate`, `getSysTime`, `getUUID`, `getVariant`, `isNull`. The others throw `ClientException`.
+- Every column implements the base `Column` getters that make sense for it: `getLong`, `getUlong`, `getDouble`, `getBool`, `getString`, `getBytes`, `getDate`, `getSysTime`, `getUUID`, `getDuration`, `getVariant`, `isNull`. The others throw `ClientException`.
 - `getString` must produce exactly the server's `toString()` text. The integration tests check this against the server.
 - Wrap values in a `Variant` with `makeVariant`. It strips `const`, so `get!T` works, and confines the `@trusted` code to one place.
 - DateTime columns without a timezone parameter get the server timezone from the handshake.
 - Timezones are resolved with `PosixTimeZone`. On Windows, which has no tz database, they fall back to UTC: the point in time stays correct, only the presentation differs.
 - Every column has `getQuotedString`, its value as ClickHouse writes it inside an array (`'...'` with backslash escapes for strings, dates, times, UUIDs and enums; `NULL`; FixedString keeps its zero padding there, unlike `getString`). Columns opt in to quoting through `quotedInText`.
-- Every column also implements the appenders that mirror the getters: `appendLong`, `appendUlong`, `appendDouble`, `appendBool`, `appendString` (parses non-string types), `appendBytes`, `appendDate`, `appendSysTime`, `appendUUID`, `appendNull` (Nullable only), `appendDefault`, and `truncate`.
+- Every column also implements the appenders that mirror the getters: `appendLong`, `appendUlong`, `appendDouble`, `appendBool`, `appendString` (parses non-string types), `appendBytes`, `appendDate`, `appendSysTime`, `appendUUID`, `appendDuration`, `appendNull` (Nullable only), `appendDefault`, and `truncate`.
   - Conversions are range-checked, and a failed append must leave the column unchanged.
   - `appendString` for DateTime types parses the text in the column timezone.
 
 Float text: the server writes floats as the shortest decimal that reads back exactly (dragonbox/zmij), in plain notation when the decimal point position n (value = 0.digits × 10^n) satisfies -6 < n <= 21, else `d.ddde-7` (no `+`); every NaN is `nan`, negative zero `-0`. `formatFloat` (`types/floattext.d`) reproduces it with exact big-integer digit generation; it was checked against ~765k server values (same on 23.8 and 26.x).
+
+Time (#21): `Time` is an `Int32` of seconds, `Time64(p)` an `Int64` of 10^-p second ticks (a Decimal64 on the server, p 0 to 9). Signed spans within ±999:59:59 (server conversions saturate there; our appenders throw). Text `[-]hh:mm:ss[.fff]`: 2 hour digits, 3 from 100 hours on, exactly p fraction digits, sign kept for `-00:00:00.25`; quoted inside arrays. The server parses `h:mm:ss` (1–3 hour digits), `m:ss`, `s`, without checking minutes/seconds against 60. Since 25.6; before 25.12 it needs `enable_time_time64_type=1` (the tests `SET` it), and on 25.x `toTime` is an older, different function: use `CAST(x AS Time)`.
 
 BFloat16 (#20): the upper 16 bits of a Float32. The server converts to it by truncation (`BFloat16(Float32)` keeps the high half), not round-to-nearest; `BFloat16Column` does the same, except that a NaN stays a NaN. Not on 23.8.
 

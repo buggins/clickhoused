@@ -19,6 +19,7 @@ import clickhoused.types.misc;
 import clickhoused.types.numeric;
 import clickhoused.types.parser : TypeArgKind, TypeNode, parseType;
 import clickhoused.types.string;
+import clickhoused.types.time : Time64Column, TimeColumn;
 import clickhoused.types.tuple : TupleColumn;
 import clickhoused.types.wideint;
 
@@ -176,6 +177,15 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
                 || type.args[0].number < 0 || type.args[0].number > 9)
             throw invalid();
         return new DateTime64Column(name, cast(uint) type.args[0].number, typeName, timezoneArg(1));
+    case "Time":
+        if (type.args.length != 0)
+            throw invalid();
+        return new TimeColumn(name, typeName);
+    case "Time64":
+        if (type.args.length != 1 || type.args[0].kind != TypeArgKind.number || type.args[0].number < 0
+                || type.args[0].number > 9)
+            throw invalid();
+        return new Time64Column(name, cast(uint) type.args[0].number, typeName);
     case "UUID":
         return new UUIDColumn(name, typeName);
     case "IPv4":
@@ -300,7 +310,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     static immutable string[] types = [
         "Int64", "Float64", "BFloat16", "Bool", "String", "FixedString(2)", "Date", "Date32",
         "DateTime('UTC')",
-        "DateTime64(3, 'UTC')", "UUID", "Enum8('a' = 1, 'b' = 2)", "Nullable(String)",
+        "DateTime64(3, 'UTC')", "Time", "Time64(6)", "UUID", "Enum8('a' = 1, 'b' = 2)",
+        "Nullable(String)",
         "Nullable(Nothing)", "Array(Int64)", "Array(Nullable(String))", "Array(Array(Date))",
         "Array(Nothing)", "LowCardinality(String)", "LowCardinality(Nullable(String))",
         "Array(LowCardinality(String))", "LowCardinality(FixedString(2))", "LowCardinality(Date)",
@@ -421,6 +432,10 @@ version (unittest)
             x.data = [-25_567, 120_529];
         else if (auto x = cast(DateTimeColumn) c)
             x.data = [0, uint.max];
+        else if (auto x = cast(TimeColumn) c)
+            x.data = [-3_599_999, 3_599_999];
+        else if (auto x = cast(Time64Column) c)
+            x.data = [-1, 3_599_999_999_999];
         else if (auto x = cast(DateTime64Column) c)
             x.data = [-1, 1_761_741_296_789];
         else if (auto x = cast(UUIDColumn) c)

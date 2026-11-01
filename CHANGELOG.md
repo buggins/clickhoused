@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The project follows [Se
 - **Geo types** (#19): `Point`, `Ring`, `LineString`, `MultiLineString`, `Polygon` and `MultiPolygon` are read and written as the Tuple and Array columns they are aliases of, keeping their type names. The `GeoPoint` value type maps to `Point`; arrays of it to the other geo types. `formatLiteral` writes `GeoPoint` as `CAST((x, y) AS Point)`.
 - **`BFloat16`** (#20): `BFloat16Column` keeps the raw 16-bit values and reads them as `float`. Appended numbers are truncated to their upper 16 bits, exactly as the server converts them (it does not round to nearest). Maps to `float` in struct mapping and `readValue`. The type exists on newer servers (not on 23.8).
 
+- **`Time` and `Time64(p)`** (#21): `TimeColumn` (seconds) and `Time64Column` (ticks of 10^-p seconds) keep the raw values; `getString` gives the server's text (`-01:01:01`, `999:59:59.999999`). The values are signed spans up to ±999:59:59, so they map to `core.time.Duration`; `std.datetime.TimeOfDay` works for values from 00:00:00 to 23:59:59. New `Column.getDuration` and `Column.appendDuration`. The types exist since ClickHouse 25.6; before 25.12 they need the `enable_time_time64_type` setting.
+
 ### Fixed
 - `getString` of `Float32` and `Float64` values now gives the server's text (#24): the shortest decimal that reads back as the same value, in plain notation for decimal exponents from -6 to 21 and `1e21`-style otherwise. Before, it kept only 6 significant digits (`9.99922e+09` instead of `9999221000`), also inside arrays, tuples and maps.
 

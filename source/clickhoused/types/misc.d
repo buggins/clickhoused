@@ -6,6 +6,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types.misc;
 
+import core.time : Duration;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
 import std.uuid : UUID;
@@ -372,6 +373,12 @@ final class NullableColumn : Column
         return nested.getUUID(row);
     }
 
+    override Duration getDuration(size_t row) const @safe
+    {
+        checkNotNull(row);
+        return nested.getDuration(row);
+    }
+
     /// `NULL`, or the quoted nested value.
     override string getQuotedString(size_t row) const @safe
     {
@@ -471,6 +478,12 @@ final class NullableColumn : Column
     override void appendUUID(UUID value) @safe
     {
         nested.appendUUID(value);
+        nulls ~= false;
+    }
+
+    override void appendDuration(Duration value) @safe
+    {
+        nested.appendDuration(value);
         nulls ~= false;
     }
 

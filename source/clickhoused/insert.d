@@ -20,8 +20,9 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.insert;
 
+import core.time : Duration;
 import std.bigint : BigInt, toDecimalString;
-import std.datetime.date : Date;
+import std.datetime.date : Date, TimeOfDay;
 import std.datetime.systime : SysTime;
 import std.traits : isAssociativeArray, isDynamicArray, isFloatingPoint, isIntegral, isSigned, isSomeString;
 import std.typecons : Nullable;
@@ -137,7 +138,8 @@ final class Inserter
     Appends one row, one value per header column, in header order.
 
     Accepted value types: integers, floating-point numbers, `bool`, strings,
-    `const(ubyte)[]`, `std.datetime.Date`, `std.datetime.SysTime`, `std.uuid.UUID`,
+    `const(ubyte)[]`, `std.datetime.Date`, `std.datetime.SysTime`, `core.time.Duration` and
+    `std.datetime.TimeOfDay` (for `Time` and `Time64`), `std.uuid.UUID`,
     D enums (stored by member name), `Int128`/`UInt128`/`Int256`/`UInt256`,
     `std.bigint.BigInt`, `Decimal`, `IPv4`, `IPv6`, structs and `std.typecons.Tuple` (for
     `Tuple` columns), associative arrays (for `Map` columns), `null`, `std.typecons.Nullable`, and
@@ -503,6 +505,10 @@ void appendValue(T)(Column column, T value) @safe
         column.appendSysTime(value);
     else static if (is(U == UUID))
         column.appendUUID(value);
+    else static if (is(U == Duration))
+        column.appendDuration(value);
+    else static if (is(U == TimeOfDay))
+        column.appendDuration(value - TimeOfDay(0, 0, 0));
     else static if (isWideInt!U)
     {
         if (auto wide = cast(WideIntColumn!U) column)

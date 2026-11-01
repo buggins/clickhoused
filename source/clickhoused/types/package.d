@@ -7,6 +7,7 @@ $(UL
     $(LI `UInt8`…`UInt64`, `Int8`…`Int64`, `Float32`, `Float64`, `BFloat16`, `Bool` (`clickhoused.types.numeric`);)
     $(LI `String`, `FixedString(N)` (`clickhoused.types.string`);)
     $(LI `Date`, `Date32`, `DateTime`, `DateTime64` (`clickhoused.types.datetime`);)
+    $(LI `Time`, `Time64` (`clickhoused.types.time`);)
     $(LI `UUID`, `Enum8`, `Enum16`, `Nullable(T)`, `Nothing` (`clickhoused.types.misc`).)
 )
 
@@ -28,5 +29,6 @@ public import clickhoused.types.misc;
 public import clickhoused.types.numeric;
 public import clickhoused.types.parser;
 public import clickhoused.types.string;
+public import clickhoused.types.time;
 public import clickhoused.types.tuple;
 public import clickhoused.types.wideint;
