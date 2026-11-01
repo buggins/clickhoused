@@ -52,6 +52,12 @@ enum TypeArgKind
     namedType,
     /// A named number, e.g. `max_types=2` in `Dynamic(max_types=2)`.
     parameter,
+    /++
+    The arguments of a `JSON` type as written, e.g.
+    ``max_dynamic_paths=10, `a.b` UInt32, SKIP `x.y` ``: they are kept as text,
+    since the client receives JSON values as text.
+    +/
+    raw,
 }
 
 /// One argument of a `TypeNode`.
@@ -64,7 +70,8 @@ struct TypeArg
     /// Value, for `TypeArgKind.number`, `TypeArgKind.enumValue` and `TypeArgKind.parameter`.
     long number;
     /// String, for `TypeArgKind.text`; label, for `TypeArgKind.enumValue`;
-    /// element name, for `TypeArgKind.namedType`; name, for `TypeArgKind.parameter`.
+    /// element name, for `TypeArgKind.namedType`; name, for `TypeArgKind.parameter`;
+    /// the arguments' text, for `TypeArgKind.raw`.
     string text;
 
     /// Formats the argument back into ClickHouse syntax.
@@ -86,6 +93,8 @@ struct TypeArg
             return quoteName(text) ~ " " ~ type.toString();
         case TypeArgKind.parameter:
             return text ~ "=" ~ number.to!string;
+        case TypeArgKind.raw:
+            return text;
         }
     }
 }
@@ -151,6 +160,13 @@ TypeNode parseType(string typeName) @safe pure
     ])
         assert(parseType(s).toString() == s, s);
 
+    // JSON arguments are kept as text
+    enum json = "JSON(max_dynamic_paths=10, `a.b` UInt32, `c)d` Array(String), SKIP `x.y`, SKIP REGEXP 'z.*)')";
+    assert(parseType(json).args.length == 1 && parseType(json).args[0].kind == TypeArgKind.raw);
+    assert(parseType(json).toString() == json && parseType("JSON").args.length == 0);
+    assert(parseType("Array(JSON( ))").toString() == "Array(JSON)");
+    assertThrown!ProtocolException(parseType("JSON(a UInt8"));
+
     const dynamic = parseType("Dynamic(max_types = 10)");
     assert(dynamic.args[0].kind == TypeArgKind.parameter && dynamic.args[0].text == "max_types"
             && dynamic.args[0].number == 10 && dynamic.toString() == "Dynamic(max_types=10)");
@@ -188,7 +204,15 @@ private struct Parser
         TypeNode node;
         node.name = parseIdentifier();
         skipSpaces();
-        if (peek == '(')
+        if (peek == '(' && node.name == "JSON")
+        {
+            // Typed paths, SKIP clauses and parameters: kept as text
+            pos++;
+            const raw = parseRawArguments();
+            if (raw.length)
+                node.args ~= TypeArg(TypeArgKind.raw, TypeNode.init, 0, raw);
+        }
+        else if (peek == '(')
         {
             pos++;
             skipSpaces();
@@ -269,6 +293,40 @@ private struct Parser
             }
         }
         return arg;
+    }
+
+    /// The text up to the `)` that closes the current argument list (consumed), skipping quoted text and
+    /// nested parentheses; trimmed.
+    string parseRawArguments() @safe pure
+    {
+        import std.string : strip;
+
+        const start = pos;
+        size_t depth;
+        while (pos < input.length)
+        {
+            const c = input[pos];
+            if (c == '\'' || c == '`')
+            {
+                parseDelimited(c);
+                continue;
+            }
+            if (c == '(')
+                depth++;
+            else if (c == ')')
+            {
+                if (depth == 0)
+                {
+                    const text = input[start .. pos].strip;
+                    pos++;
+                    return text;
+                }
+                depth--;
+            }
+            pos++;
+        }
+        fail("expected ')'");
+        assert(0);
     }
 
     string parseIdentifier() @safe pure

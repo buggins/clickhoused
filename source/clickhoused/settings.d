@@ -124,11 +124,13 @@ struct ConnectionOptions
     bool yieldBetweenBlocks = true;
 
     /++
-    Ask the server for the forms of `Dynamic` columns that this client reads
-    fully: the flattened form, on servers 25.6 and newer (the setting
-    `output_format_native_use_flattened_dynamic_and_json_serialization`).
-    Without it, values that overflow a column's `max_types` arrive
-    binary-encoded and can't be read. Settings given explicitly win.
+    Ask the server for the forms of new types that this client reads fully:
+    JSON as text on servers 24.10 and newer (`output_format_native_write_json_as_string`),
+    and the flattened form of `Dynamic` on servers 25.6 and newer
+    (`output_format_native_use_flattened_dynamic_and_json_serialization`).
+    Without them, JSON columns can't be read, and Dynamic values that
+    overflow a column's `max_types` arrive binary-encoded and can't be read.
+    Settings given explicitly win.
     +/
     bool simpleNativeFormats = true;
 

@@ -24,6 +24,7 @@ public import clickhoused.types.dynamic;
 public import clickhoused.types.factory;
 public import clickhoused.types.geo;
 public import clickhoused.types.ip;
+public import clickhoused.types.json;
 public import clickhoused.types.lowcardinality;
 public import clickhoused.types.map;
 public import clickhoused.types.misc;

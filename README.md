@@ -180,6 +180,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 | `Point`, `Ring`, `LineString`, `MultiLineString`, `Polygon`, `MultiPolygon`, `MultiPoint` | `TupleColumn`, `ArrayColumn` | `GeoPoint`, `GeoPoint[]`, `GeoPoint[][]`, `GeoPoint[][][]` |
 | `Variant(T1, ...)`, `Geometry` | `VariantColumn` (`discriminators` plus a column per alternative) | `std.variant.Variant` (NULL as an empty one), or the D type of the held value |
 | `Dynamic` | `DynamicColumn` (the values as a `VariantColumn` of the types seen) | as for Variant; on insert the type comes from the D value (`long` is `Int64`, `long[]` `Array(Int64)`, a struct a named `Tuple`), or `appendTyped` |
+| `JSON[(...)]` | `JsonColumn` (JSON text per row) | `string` (JSON text) or `std.json.JSONValue` |
 | `Nested(a T, b U)` | with `flatten_nested = 1` (the default): separate `Array` columns `n.a`, `n.b`; with `flatten_nested = 0`: `ArrayColumn` of a named `TupleColumn` | `T[]` per column (`@column("n.a")`), or an array of structs with fields `a`, `b` |
 | `LowCardinality(T)`, also in arrays | `LowCardinalityColumn`; `block.column!StringColumn(...)` etc. return its decoded values | as for `T` |
 
@@ -187,7 +188,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 
 - TLS needs the system's OpenSSL; on macOS that is Homebrew's (the built-in LibreSSL is not used).
 - `Dynamic` values that overflow a column's `max_types` can only be read from servers 25.6 and newer, which send them in a client-friendly form (requested automatically; see `ConnectionOptions.simpleNativeFormats`). Older servers send them binary-encoded, and reading such a value throws.
-- Not supported yet: `JSON`. A query returning such a column fails with a clear error. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
+- `JSON` columns are read and written as JSON text, which needs ClickHouse 24.10 or newer (the setting is requested automatically; see `ConnectionOptions.simpleNativeFormats`). Older servers send JSON in an internal form, and reading it fails with a clear error. The old experimental `Object('json')` type is not supported. Progress: [#10](https://github.com/buggins/clickhoused/issues/10).
 - On Windows, timezone names fall back to UTC (no system timezone database). The point in time stays correct.
 
 ## Building and testing

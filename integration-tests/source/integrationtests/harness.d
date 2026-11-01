@@ -22,6 +22,7 @@ import integrationtests.floats;
 import integrationtests.geo;
 import integrationtests.insert;
 import integrationtests.ip;
+import integrationtests.json;
 import integrationtests.lowcardinality;
 import integrationtests.map;
 import integrationtests.mapping;
@@ -124,6 +125,9 @@ immutable TestCase[] allTests = [
     TestCase("Dynamic: read", &testDynamicRead, true),
     TestCase("Dynamic: SharedVariant (V1 form)", &testDynamicSharedVariant, true),
     TestCase("Dynamic: insert and mapping", &testDynamicInsert, true),
+    TestCase("JSON: read", &testJsonRead, true),
+    TestCase("JSON: insert and mapping", &testJsonInsert, true),
+    TestCase("JSON: internal form rejected", &testJsonInternalFormRejected, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

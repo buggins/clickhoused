@@ -39,6 +39,7 @@ import std.meta : AliasSeq;
 import std.traits : getUDAs, hasUDA, isAssociativeArray, isDynamicArray, isFloatingPoint, isIntegral, isSigned,
     isSomeString, KeyType, Unqual, ValueType;
 import std.typecons : Nullable;
+import std.json : JSONValue;
 import std.uuid : UUID;
 import std.variant : Variant;
 
@@ -105,7 +106,8 @@ column), `Decimal` (any numeric column), `IPv4`, `IPv6`, structs and
 `std.typecons.Tuple` (for `Tuple` columns, see `isTupleValue`), associative
 arrays `V[K]` (for `Map` columns), `std.variant.Variant` (any column: the value of `getVariant`,
 NULL as an empty `Variant`), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `Duration`,
-`TimeOfDay` (from 00:00:00 to 23:59:59), `UUID`, D enums,
+`TimeOfDay` (from 00:00:00 to 23:59:59), `std.json.JSONValue` (`JSON` columns, or JSON text in any
+column), `UUID`, D enums,
 `std.typecons.Nullable` of these, and dynamic arrays of mappable values
 (for `Array` columns; `ubyte[]` stays the type for `String` bytes).
 +/
@@ -123,7 +125,7 @@ template isMappableValue(T)
     else
         enum isMappableValue = isIntegral!U || isFloatingPoint!U || is(U == bool) || is(U == string)
             || is(U == ubyte[]) || is(U == immutable(ubyte)[]) || is(U == Date) || is(U == SysTime) || is(U == UUID)
-            || is(U == Duration) || is(U == TimeOfDay) || is(U == Variant)
+            || is(U == Duration) || is(U == TimeOfDay) || is(U == Variant) || is(U == JSONValue)
             || is(U == enum) || isWideInt!U || is(U == BigInt) || is(U == Decimal) || is(U == IPv4)
             || is(U == IPv6);
 }
@@ -136,7 +138,7 @@ the structs that are values themselves (`Date`, `SysTime`, `Decimal`, ...).
 package template isTupleValue(T)
 {
     static if (is(T == struct) && !is(T == Date) && !is(T == SysTime) && !is(T == UUID) && !is(T == Duration)
-            && !is(T == TimeOfDay) && !is(T == Variant) && !isWideInt!T
+            && !is(T == TimeOfDay) && !is(T == Variant) && !is(T == JSONValue) && !isWideInt!T
             && !is(T == BigInt) && !is(T == Decimal) && !is(T == IPv4) && !is(T == IPv6) && !is(T : Nullable!V, V))
         enum isTupleValue = () {
             bool all = true;
@@ -343,6 +345,15 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
             return column.getUUID(row);
         else static if (is(U == Duration))
             return column.getDuration(row);
+        else static if (is(U == JSONValue))
+        {
+            import std.json : JSONException, parseJSON;
+
+            try
+                return parseJSON(column.getString(row));
+            catch (JSONException e)
+                throw new ClientException("Column '" ~ column.name ~ "' (" ~ column.typeName ~ "): not JSON: " ~ e.msg);
+        }
         else static if (is(U == TimeOfDay))
         {
             import core.time : hours;
@@ -948,4 +959,36 @@ private string columnList(Block block) @safe
     assert(d.isNull(8));
     assert(readValue!(long[])(d, 1) == [1, 2] && readValue!Pair(d, 3) == Pair(3, "x"));
     assertThrown!ClientException(readValue!long(d, 8));
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import std.json : parseJSON;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.dynamic : DynamicColumn;
+    import clickhoused.types.factory : createColumn;
+    import clickhoused.types.variant : VariantColumn;
+
+    // std.json.JSONValue: JSON columns (and JSON text elsewhere), also inside Variant and Dynamic
+    static struct Doc
+    {
+        uint id;
+        JSONValue body;
+    }
+
+    auto j = createColumn("j", "JSON");
+    appendValue(j, parseJSON(`{"a":[1,2]}`));
+    assert(j.getString(0) == `{"a":[1,2]}` && readValue!JSONValue(j, 0)["a"][1].integer == 2);
+    auto s = createColumn("s", "String");
+    appendValue(s, "not json");
+    assertThrown!ClientException(readValue!JSONValue(s, 0));
+    assert(isMappableValue!Doc && !isTupleValue!JSONValue);
+
+    auto v = createColumn("v", "Variant(JSON, String)");
+    appendValue(v, parseJSON(`{"b":1}`));
+    assert((cast(VariantColumn) v).variantTypeName(0) == "JSON");
+    auto d = cast(DynamicColumn) createColumn("d", "Dynamic");
+    appendValue(d, parseJSON(`{"c":true}`));
+    assert(d.dynamicTypeName(0) == "JSON" && d.getString(0) == `{"c":true}`);
 }

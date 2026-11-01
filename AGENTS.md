@@ -74,7 +74,7 @@ source/clickhoused/        library:
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn), array.d (ArrayColumn),
                            lowcardinality.d (LowCardinalityColumn), wideint.d (Int128…UInt256, WideIntColumn),
                            decimal.d (Decimal, DecimalColumn), ip.d (IPv4, IPv6 and their columns),
-                           tuple.d (TupleColumn), map.d (MapColumn), geo.d (GeoPoint, geo type aliases), variant.d (VariantColumn, Geometry), dynamic.d (DynamicColumn), textlist.d (parsing [..], (..) and {k:v}
+                           tuple.d (TupleColumn), map.d (MapColumn), geo.d (GeoPoint, geo type aliases), variant.d (VariantColumn, Geometry), dynamic.d (DynamicColumn), json.d (JsonColumn), textlist.d (parsing [..], (..) and {k:v}
                            text for appendString),
                            numeric.d (+ BFloat16Column), floattext.d (formatFloat: server float text), string.d,
                            datetime.d (+ resolveTimeZone), time.d (TimeColumn, Time64Column), misc.d (UUID, Enum, Nullable, Nothing),
@@ -263,8 +263,8 @@ The first implementation supports **basic types only**:
 - `UUID`, `Enum8`/`Enum16`;
 - `Nullable(T)` of the types above.
 
-`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5), `Tuple` (#6), `Map` (#7), geo types (#19), `BFloat16` (#20), `Time`/`Time64` (#21), `Nested` (#22), `Variant` (#29) and `Dynamic` (#30) are supported too. Everything else comes later (tracking issue #10):
-- JSON (#31); Variant (#29) and Dynamic (#30) are done. Design for all three: PLAN.md §14.
+`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5), `Tuple` (#6), `Map` (#7), geo types (#19), `BFloat16` (#20), `Time`/`Time64` (#21), `Nested` (#22), `Variant` (#29), `Dynamic` (#30) and `JSON` (#31, as text) are supported too. Everything else comes later (tracking issue #10):
+- nothing left from tracking issue #10; the design of Variant, Dynamic and JSON is in PLAN.md §14.
 
 These types are implemented (milestone M2). An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
 
@@ -287,6 +287,8 @@ Time (#21): `Time` is an `Int32` of seconds, `Time64(p)` an `Int64` of 10^-p sec
 BFloat16 (#20): the upper 16 bits of a Float32. The server converts to it by truncation (`BFloat16(Float32)` keeps the high half), not round-to-nearest; `BFloat16Column` does the same, except that a NaN stays a NaN. Not on 23.8.
 
 Nested (#22): with `flatten_nested = 1` (default) the server splits `n Nested(a T, b U)` into columns `n.a Array(T)`, `n.b Array(U)` and checks on insert that a row's arrays have equal lengths. With `flatten_nested = 0` (session setting at CREATE time) the column keeps the type `Nested(a T, b U)`, sent with that name and exactly the bytes of `Array(Tuple(a T, b U))` (same on 23.8 and 26.11); `createColumn` builds that ArrayColumn under the Nested name. Subcolumns `n.a` can still be selected. Nested can nest; Nullable/LowCardinality of it are invalid.
+
+JSON (#31): by default (our revision gets object serialization V1) the server sends typed/dynamic paths and binary shared data; we only read the STRING form (`UInt64` 1, then one `String` per row), which `output_format_native_write_json_as_string=1` gives on 24.10+ (`Connection.mergedSettings`, option `simpleNativeFormats`). The server accepts STRING on insert too, but **closes the connection when it can't parse a JSON text** (code 117 then reset), so `JsonColumn.appendString` validates with `std.json` (must be an object). `Nullable(JSON)` exists (prefix before the null map); JSON is quoted like a string inside arrays/tuples; `dynamicType` of a JSON value is `JSON`. JSON type arguments (`max_dynamic_paths=N`, `` `a.b` UInt32 ``, `SKIP`, `SKIP REGEXP '...'`) are kept as one raw `TypeArg`. On 25.8 `map('k', number, 'v', toString(number))` fails (no supertype); build JSON text with `concat` in tests.
 
 Dynamic (#30): at our revision (54460 < 54473) the server sends structure V1: `UInt64` 1, `VarUInt` max types (= count), `VarUInt` count, type names, then a `Variant(types..., SharedVariant)` sorted by name (byte-wise, as the server sorts). `SharedVariant` holds binary type encoding + RowBinary values for types beyond `max_types`; we keep them as raw bytes (copyable, not readable). On 25.6+ `Connection.mergedSettings` adds `output_format_native_use_flattened_dynamic_and_json_serialization=1` (option `simpleNativeFormats`), giving FLATTENED (`UInt64` 3): count, type names (listed order), a `UInt8` index per row (count = NULL; wider index types only above 255 types, which we reject), then each type's column. We always write V1 without SharedVariant values (accepted by every server; checked); type names must be canonical (`appendTyped` canonicalizes via the parser) because the server sorts by its canonical names. Server inference for inserted text: Int64 (UInt64 above the Int64 range), Float64, String, Bool, Date, DateTime/DateTime64(9), Array(Int64), unnamed Tuple, Map.
 
