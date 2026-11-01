@@ -117,8 +117,9 @@ string markdownRow(const Result r)
 
     const seconds = r.median.total!"hnsecs" / 1e7;
     const mb = r.bytes / 1e6;
-    return format("| %s | %s | %.1f | %.2f | %.2f | %.1f | %s | %.1f | %s |", r.name, r.rows, mb,
-            seconds * 1e3, r.min.total!"hnsecs" / 1e4, r.rows / seconds / 1e6,
+    const mrows = r.rows / seconds / 1e6;
+    return format("| %s | %s | %.1f | %.2f | %.2f | %s | %s | %.1f | %s |", r.name, r.rows, mb,
+            seconds * 1e3, r.min.total!"hnsecs" / 1e4, format(mrows < 1 ? "%.3f" : "%.1f", mrows),
             r.bytes ? format("%.0f", mb / seconds) : "", cast(double) r.allocatedPerRun / r.rows, r.runs);
 }
 
@@ -130,6 +131,9 @@ string csvRow(const Result r)
 {
     import std.format : format;
 
-    return format("%s,%s,%s,%s,%s,%s,%s,%s", r.name, r.rows, r.bytes, r.median.total!"nsecs",
+    import std.array : replace;
+
+    // Names contain commas: quote them, doubling quotes
+    return format("\"%s\",%s,%s,%s,%s,%s,%s,%s", r.name.replace(`"`, `""`), r.rows, r.bytes, r.median.total!"nsecs",
             r.min.total!"nsecs", r.allocatedPerRun, r.collections, r.runs);
 }

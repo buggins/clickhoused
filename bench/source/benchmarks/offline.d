@@ -91,34 +91,41 @@ final class MemoryTransport : Transport
 }
 
 /// A transport that keeps what is written.
-private final class RecordingTransport : Transport
+final class RecordingTransport : Transport
 {
+    /// Everything written.
     ubyte[] data;
 
+    /// Reads nothing.
     size_t read(scope ubyte[]) @safe
     {
         return 0;
     }
 
+    /// Keeps `bytes`.
     void write(scope const(ubyte)[] bytes) @safe
     {
         data ~= bytes;
     }
 
+    /// Always false.
     bool dataAvailable() @safe
     {
         return false;
     }
 
+    /// Does nothing.
     void close() @safe nothrow
     {
     }
 
+    /// Always true.
     bool connected() const @safe nothrow
     {
         return true;
     }
 
+    /// Does nothing.
     void setTimeouts(Duration, Duration) @safe
     {
     }
@@ -127,22 +134,39 @@ private final class RecordingTransport : Transport
 /// Fills a column with the value of row `row` (deterministic).
 alias Fill = void function(Column column, size_t row);
 
-/// Blocks of `rows` rows in total, one column of `typeName`, filled by `fill`.
-Block[] makeBlocks(string typeName, size_t rows, Fill fill)
+/// A column of generated blocks: name, type and how its values are made.
+struct Spec
+{
+    string name; ///
+    string type; ///
+    Fill fill; ///
+}
+
+/// Blocks of `rows` rows in total, `blockSize` rows each, with the columns `specs`.
+Block[] makeBlocks(const Spec[] specs, size_t rows, size_t blockSize = blockRows)
 {
     Block[] blocks;
-    for (size_t start = 0; start < rows; start += blockRows)
+    for (size_t start = 0; start < rows; start += blockSize)
     {
-        const count = rows - start < blockRows ? rows - start : blockRows;
-        auto column = createColumn("c", typeName, "UTC");
-        foreach (row; start .. start + count)
-            fill(column, row);
+        const count = rows - start < blockSize ? rows - start : blockSize;
         auto block = new Block;
-        block.columns = [column];
+        foreach (spec; specs)
+        {
+            auto column = createColumn(spec.name, spec.type, "UTC");
+            foreach (row; start .. start + count)
+                spec.fill(column, row);
+            block.columns ~= column;
+        }
         block.rows = count;
         blocks ~= block;
     }
     return blocks;
+}
+
+/// ditto, one column `c` of `typeName`.
+Block[] makeBlocks(string typeName, size_t rows, Fill fill)
+{
+    return makeBlocks([Spec("c", typeName, fill)], rows);
 }
 
 /// `blocks` in the native format, as the server sends them at our revision.
@@ -159,9 +183,15 @@ immutable(ubyte)[] encode(Block[] blocks)
 /// A decoding case: reads all blocks of the input.
 BenchCase decodeCase(string typeName, Fill fill, size_t defaultRows = 1_000_000, string label = null)
 {
+    return decodeCase([Spec("c", typeName, fill)], label.length ? label : typeName, defaultRows);
+}
+
+/// ditto, for blocks of several columns and `blockSize` rows.
+BenchCase decodeCase(const Spec[] specs, string label, size_t defaultRows, size_t blockSize = blockRows)
+{
     Prepared prepare(size_t rows)
     {
-        const bytes = encode(makeBlocks(typeName, rows, fill));
+        const bytes = encode(makeBlocks(specs, rows, blockSize));
         auto transport = new MemoryTransport(bytes);
         void run()
         {
@@ -175,15 +205,21 @@ BenchCase decodeCase(string typeName, Fill fill, size_t defaultRows = 1_000_000,
         return Prepared(rows, bytes.length, &run);
     }
 
-    return BenchCase("decode/" ~ (label.length ? label : typeName), &prepare, defaultRows);
+    return BenchCase("decode/" ~ label, &prepare, defaultRows);
 }
 
 /// An encoding case: writes all blocks of the input.
 BenchCase encodeCase(string typeName, Fill fill, size_t defaultRows = 1_000_000, string label = null)
 {
+    return encodeCase([Spec("c", typeName, fill)], label.length ? label : typeName, defaultRows);
+}
+
+/// ditto, for blocks of several columns and `blockSize` rows.
+BenchCase encodeCase(const Spec[] specs, string label, size_t defaultRows, size_t blockSize = blockRows)
+{
     Prepared prepare(size_t rows)
     {
-        auto blocks = makeBlocks(typeName, rows, fill);
+        auto blocks = makeBlocks(specs, rows, blockSize);
         auto transport = new MemoryTransport;
         size_t bytes;
         void run()
@@ -200,7 +236,7 @@ BenchCase encodeCase(string typeName, Fill fill, size_t defaultRows = 1_000_000,
         return Prepared(rows, bytes, &run);
     }
 
-    return BenchCase("encode/" ~ (label.length ? label : typeName), &prepare, defaultRows);
+    return BenchCase("encode/" ~ label, &prepare, defaultRows);
 }
 
 /// A pseudo-random number for `row` (a fixed permutation, so runs are repeatable).
@@ -212,14 +248,16 @@ ulong mix(size_t row) @safe pure nothrow @nogc
     return x ^ (x >> 32);
 }
 
-private string shortText(size_t row)
+/// A 10-byte text for `row`.
+string shortText(size_t row)
 {
     import std.format : format;
 
     return format("s%09d", mix(row) % 1_000_000_000); // 10 bytes
 }
 
-private string longText(size_t row)
+/// A 1 KB text for `row`.
+string longText(size_t row)
 {
     import std.array : replicate;
 
@@ -278,4 +316,119 @@ private Duration days(long n) @safe pure nothrow
     import core.time : dur;
 
     return dur!"days"(n);
+}
+
+/// The columns of the wide-block cases: a mix of common types.
+Spec[] mixedSpecs(size_t columns)
+{
+    static immutable Spec[] kinds = [
+        Spec("", "UInt64", (c, r) { c.appendUlong(mix(r)); }),
+        Spec("", "String", (c, r) { c.appendString(shortText(r)); }),
+        Spec("", "Float64", (c, r) { c.appendDouble((mix(r) % 1_000_000) / 7.0); }),
+        Spec("", "Nullable(Int32)", (c, r) {
+            if (mix(r) % 10 == 0)
+                c.appendNull();
+            else
+                c.appendLong(cast(int) mix(r));
+        }),
+        Spec("", "DateTime", (c, r) { c.appendLong(mix(r) % 4_000_000_000); }),
+        Spec("", "LowCardinality(String)", (c, r) { c.appendString(shortText(mix(r) % 100)); }),
+    ];
+    Spec[] specs;
+    foreach (i; 0 .. columns)
+    {
+        import std.conv : to;
+
+        const kind = kinds[i % kinds.length];
+        specs ~= Spec("c" ~ i.to!string, kind.type, kind.fill);
+    }
+    return specs;
+}
+
+/// The composite and new types, decoded and encoded; a wide block and many small blocks.
+BenchCase[] compositeCases()
+{
+    import std.format : format;
+    import std.typecons : tuple, Tuple;
+    import clickhoused.insert : appendValue;
+
+    struct TypeCase
+    {
+        string type;
+        Fill fill;
+        size_t rows;
+        string label;
+    }
+
+    TypeCase[] types = [
+        TypeCase("LowCardinality(String)", (c, r) { c.appendString(shortText(mix(r) % 100)); }, 1_000_000,
+                "LowCardinality(String) 100 keys"),
+        TypeCase("Nullable(String)", (c, r) {
+            if (mix(r) % 10 == 0)
+                c.appendNull();
+            else
+                c.appendString(shortText(r));
+        }, 1_000_000),
+        TypeCase("Array(UInt32)", (c, r) {
+            uint[] values;
+            foreach (i; 0 .. mix(r) % 17)
+                values ~= cast(uint) mix(r + i);
+            appendValue(c, values);
+        }, 1_000_000, "Array(UInt32) avg 8"),
+        TypeCase("Array(String)", (c, r) {
+            string[] values;
+            foreach (i; 0 .. mix(r) % 9)
+                values ~= shortText(r + i);
+            appendValue(c, values);
+        }, 1_000_000, "Array(String) avg 4"),
+        TypeCase("Map(String, UInt64)", (c, r) {
+            Tuple!(string, ulong)[] entries;
+            foreach (i; 0 .. mix(r) % 9)
+                entries ~= tuple(shortText(i), mix(r + i));
+            appendValue(c, entries);
+        }, 1_000_000, "Map(String, UInt64) avg 4"),
+        TypeCase("Tuple(UInt64, String)", (c, r) { appendValue(c, tuple(mix(r), shortText(r))); }, 1_000_000),
+        TypeCase("Decimal(18, 4)", (c, r) {
+            c.appendString(format("%d.%04d", mix(r) % 100_000_000, mix(r) % 10_000));
+        }, 1_000_000),
+        TypeCase("Int128", (c, r) { c.appendLong(cast(long) mix(r)); }, 1_000_000),
+        TypeCase("IPv6", (c, r) {
+            c.appendString(format("2001:db8::%x:%x", mix(r) % 65_536, r % 65_536));
+        },
+                1_000_000),
+        TypeCase("Variant(String, UInt64)", (c, r) {
+            if (r % 2)
+                c.appendString(shortText(r));
+            else
+                c.appendUlong(mix(r));
+        }, 1_000_000),
+        TypeCase("Dynamic", (c, r) {
+            final switch (r % 3)
+            {
+            case 0:
+                c.appendLong(cast(long) mix(r));
+                break;
+            case 1:
+                c.appendString(shortText(r));
+                break;
+            case 2:
+                c.appendDouble((mix(r) % 1000) / 7.0);
+                break;
+            }
+        }, 1_000_000, "Dynamic 3 types"),
+        TypeCase("JSON", (c, r) {
+            enum json = `{"id":%d,"name":"%s","tags":["a","b"],"score":%d.5}`;
+            c.appendString(format(json, r, shortText(r), mix(r) % 100));
+        }, 100_000, "JSON ~60 B"),
+    ];
+    BenchCase[] cases;
+    foreach (t; types)
+        cases ~= decodeCase(t.type, t.fill, t.rows, t.label);
+    foreach (t; types)
+        cases ~= encodeCase(t.type, t.fill, t.rows, t.label);
+    cases ~= decodeCase(mixedSpecs(24), "wide 24 columns", 200_000);
+    cases ~= encodeCase(mixedSpecs(24), "wide 24 columns", 200_000);
+    cases ~= decodeCase(mixedSpecs(6), "6 columns, 1000-row blocks", 200_000, 1000);
+    cases ~= encodeCase(mixedSpecs(6), "6 columns, 1000-row blocks", 200_000, 1000);
+    return cases;
 }

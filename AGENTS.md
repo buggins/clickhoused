@@ -89,7 +89,8 @@ integration-tests-vibe/    runner for fiber mode: depends on vibe-core and runs 
 integration-tests-vibe1/   the same fiber-mode tests against vibe-core 1.22.6 (sources shared with integration-tests-vibe)
 examples/                  dub subpackages: basic (`:example-basic`), vibe (`:example-vibe`); read CLICKHOUSE_DSN
 bench/                     benchmarks (dub subpackage `:bench`, local runs only): runner.d (cases, timing, GC stats),
-                           offline.d (decode/encode from memory); results and baseline in doc/benchmarks.md
+                           offline.d (decode/encode from memory), compression.d (LZ4/ZSTD/CityHash),
+                           api.d (SELECT/INSERT over a scripted transport, per-cell getters); results in doc/benchmarks.md
 ```
 
 To add an integration test, write a `void function()` that throws on failure in an `integrationtests.*` module, and append it to `allTests` (set `needsServer` if it talks to ClickHouse). Mode-specific tests are registered by the runners:
