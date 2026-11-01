@@ -10,7 +10,7 @@ import std.conv : ConvException, to;
 import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, StringArena;
 import clickhoused.types.column;
 
 /++
@@ -18,6 +18,10 @@ import clickhoused.types.column;
 
 `getLong`, `getUlong` and `getDouble` parse the text and throw
 `ClientException` if it is not a number.
+
+Decoded values are slices of a few shared buffers (up to 64 KB each), not one
+allocation per value: keeping one value alive keeps its buffer alive. `.idup`
+a value to keep it apart.
 +/
 final class StringColumn : Column
 {
@@ -35,12 +39,19 @@ final class StringColumn : Column
         return data.length;
     }
 
+    /// Reads `rows` values; their bytes share a few large buffers (see `StringArena`).
     override void readData(BufferedReader reader, size_t rows) @safe
     {
         data = null;
-        data.reserve(rows < readChunkRows ? rows : readChunkRows);
-        foreach (i; 0 .. rows)
-            data ~= reader.readString();
+        StringArena arena;
+        while (data.length < rows)
+        {
+            // At once for moderate counts; a huge count claimed by a broken stream grows as data arrives
+            const start = data.length;
+            data.length = growRows(start, rows);
+            foreach (ref value; data[start .. $])
+                value = reader.readString(arena);
+        }
     }
 
     override void writeData(BufferedWriter writer) const @safe

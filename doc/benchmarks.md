@@ -167,3 +167,27 @@ Inner loops rewritten as checked pointer code: fixed 8/16-byte copies where enou
 | query/drain lz4 | 189–222 | 233–412 | 1.2–2.1x |
 
 Decompression is now in the range the LZ4 project quotes for its reference implementation. With compression on, the remaining cost of a SELECT is decoding the columns (strings first), not LZ4.
+
+### Strings (#42)
+
+String values are read into shared buffers (`StringArena`: 4 KB first, doubling to 64 KB; long values on their own) instead of one allocation each, and the slice array of a column is allocated at once for up to 1M rows. `StringColumn.data` stays a `string[]`. Two rounds, min times in ms (before: `main` with #40):
+
+| case | before ms | after ms | speed-up | alloc B/row |
+|---|---:|---:|---:|---:|
+| decode/String(10 B) | 83.3–88.6 | 17.9–18.4 | 4.6–4.8x | 32 → 28 |
+| decode/String(1 KB) | 23.7–23.9 | 9.7–9.8 | 2.4–2.5x | 1377 → 1106 |
+| decode/Nullable(String) | 130.9–132.4 | 44.8–54.3 | 2.4–3.0x | 32 → 28 |
+| decode/Array(String) avg 4 | 392.3–416.0 | 84.4–98.3 | 4.2–4.6x | 91 → 116 |
+| decode/Map(String, UInt64) avg 4 | 388.4–390.3 | 89.2–93.7 | 4.1–4.4x | 101 → 124 |
+| decode/Tuple(UInt64, String) | 95.7–96.1 | 18.8–21.7 | 4.4–5.1x | 40 → 36 |
+| decode/Variant(String, UInt64) | 49.1–54.5 | 11.9–12.6 | 3.9–4.6x | 29 → 28 |
+| decode/Dynamic 3 types | 33.2–35.3 | 9.0–9.7 | 3.4–3.9x | 25 → 24 |
+| decode/JSON ~60 B | 8.3–8.7 | 1.9–2.0 | 4.4–4.5x | 81 → 83 |
+| decode/wide 24 columns | 139.7–150.1 | 80.2–83.2 | 1.7–1.9x | 266 → 261 |
+| decode/6 columns, 1000-row blocks | 39.7–41.4 | 20.5–22.7 | 1.8–2.0x | 87 → 98 |
+| query/drain | 100.3–101.5 | 23.1–24.2 | 4.1–4.4x | 56 → 52 |
+| query/drain lz4 | 111.8–129.6 | 43.4–55.4 | 2.3–2.6x | 114 → 110 |
+| query/query!T structs | 255.1–277.8 | 173.7–175.5 | 1.5–1.6x | 56 → 52 |
+| query/per-cell getters | 114.0–120.9 | 41.4–41.8 | 2.8–2.9x | 56 → 52 |
+
+`LowCardinality(String)` is unchanged (its dictionary is small; the time goes into expanding it per row). The allocated bytes now are mostly the 16-byte slice per value; the ClickHouse-style layout (bytes plus offsets) would remove that, at the cost of an API change. A value kept alive keeps its shared buffer alive.
