@@ -32,6 +32,7 @@ import integrationtests.time;
 import integrationtests.tls;
 import integrationtests.tuple;
 import integrationtests.types;
+import integrationtests.variant;
 import integrationtests.wideint;
 
 /// Integration test entry point. Throws on failure.
@@ -116,6 +117,9 @@ immutable TestCase[] allTests = [
     TestCase("Time/Time64: insert and struct mapping", &testTimeInsert, true),
     TestCase("Nested: flatten_nested = 1", &testNestedFlattened, true),
     TestCase("Nested: flatten_nested = 0", &testNestedWhole, true),
+    TestCase("Variant: read", &testVariantRead, true),
+    TestCase("Variant: insert and mapping", &testVariantInsert, true),
+    TestCase("Geometry", &testGeometry, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

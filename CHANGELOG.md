@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The project follows [Se
 
 ### Added
 - **`Nested(...)` columns kept whole** (#22): with `flatten_nested = 0` a Nested column keeps its type `Nested(a T, b U)` and is read and written as an array of named tuples (on the wire it is exactly `Array(Tuple(a T, b U))`), so it maps to arrays of structs. With the default `flatten_nested = 1` the server splits it into the `Array` columns `n.a`, `n.b`, which already worked; struct fields map to them with `@column("n.a")`, and the server rejects rows whose arrays differ in length.
+- **`Variant(T1, ..., Tn)`** (#29): `VariantColumn` keeps the discriminators and one column per alternative, as on the wire; getters and text go to the held value (`[1,'a',NULL]` inside arrays), and NULL is a row without a value. Appends choose the alternative from the kind of value (`appendLong` the first integer alternative it fits in, `appendString` a string alternative, else the first one that parses the text; `1` and `'1'` in text lists go to different alternatives); `appendTo` chooses explicitly. Arrays, structs, `Decimal`, `IPv4` and other values go to the alternative that takes them.
+- **`Geometry`**, the Variant of the geo types (newer servers), and the **`MultiPoint`** geo type (`Array(Point)`).
+- `std.variant.Variant` maps to any column in struct mapping, `readValue` and inserts (`appendVariant`): the value of `getVariant`, NULL as an empty `Variant`. `readValue` reads a Variant cell as the D type of its held value.
+
+### Changed
+- `Connection.query!T`, `queryRow!T`, `queryValue!T`, `insert` and `RowRange` infer their attributes instead of being marked `@safe`, so structs with a `std.variant.Variant` field (whose copying is `@system`) work; for other structs they are still `@safe`. `appendValue` takes its value by `auto ref`.
 
 ## 0.4.0 — 2026-11-01
 

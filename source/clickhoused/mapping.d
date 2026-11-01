@@ -40,6 +40,7 @@ import std.traits : getUDAs, hasUDA, isAssociativeArray, isDynamicArray, isFloat
     isSomeString, KeyType, Unqual, ValueType;
 import std.typecons : Nullable;
 import std.uuid : UUID;
+import std.variant : Variant;
 
 import clickhoused.block : Block;
 import clickhoused.connection : QueryResult, QueryStats;
@@ -102,7 +103,8 @@ Whether values of type `T` can be read from and written to columns: numbers,
 `Int128`, `UInt128`, `Int256`, `UInt256`, `std.bigint.BigInt` (any integer
 column), `Decimal` (any numeric column), `IPv4`, `IPv6`, structs and
 `std.typecons.Tuple` (for `Tuple` columns, see `isTupleValue`), associative
-arrays `V[K]` (for `Map` columns), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `Duration`,
+arrays `V[K]` (for `Map` columns), `std.variant.Variant` (any column: the value of `getVariant`,
+NULL as an empty `Variant`), `bool`, `string`, `ubyte[]`, `Date`, `SysTime`, `Duration`,
 `TimeOfDay` (from 00:00:00 to 23:59:59), `UUID`, D enums,
 `std.typecons.Nullable` of these, and dynamic arrays of mappable values
 (for `Array` columns; `ubyte[]` stays the type for `String` bytes).
@@ -121,7 +123,7 @@ template isMappableValue(T)
     else
         enum isMappableValue = isIntegral!U || isFloatingPoint!U || is(U == bool) || is(U == string)
             || is(U == ubyte[]) || is(U == immutable(ubyte)[]) || is(U == Date) || is(U == SysTime) || is(U == UUID)
-            || is(U == Duration) || is(U == TimeOfDay)
+            || is(U == Duration) || is(U == TimeOfDay) || is(U == Variant)
             || is(U == enum) || isWideInt!U || is(U == BigInt) || is(U == Decimal) || is(U == IPv4)
             || is(U == IPv6);
 }
@@ -134,7 +136,7 @@ the structs that are values themselves (`Date`, `SysTime`, `Decimal`, ...).
 package template isTupleValue(T)
 {
     static if (is(T == struct) && !is(T == Date) && !is(T == SysTime) && !is(T == UUID) && !is(T == Duration)
-            && !is(T == TimeOfDay) && !isWideInt!T
+            && !is(T == TimeOfDay) && !is(T == Variant) && !isWideInt!T
             && !is(T == BigInt) && !is(T == Decimal) && !is(T == IPv4) && !is(T == IPv6) && !is(T : Nullable!V, V))
         enum isTupleValue = () {
             bool all = true;
@@ -170,11 +172,23 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
             return T.init;
         return T(readValue!V(column, row));
     }
+    else static if (is(U == Variant))
+    {
+        // Any column, NULL as an empty Variant; std.variant is not annotated @safe, but copying is memory-safe
+        return (() @trusted => column.getVariant(row))();
+    }
     else
     {
         if (column.isNull(row))
             throw new ClientException("Column '" ~ column.name ~ "' has a NULL value, which " ~ U.stringof
                     ~ " cannot hold; use Nullable!" ~ U.stringof);
+        {
+            // A Variant cell reads as the value in its alternative's column
+            import clickhoused.types.variant : VariantColumn;
+
+            if (auto variant = cast(VariantColumn) column)
+                return readValue!T(variant.variants[variant.discriminators[row]], variant.position(row));
+        }
         static if (isMappedArray!U)
         {
             import clickhoused.types.array : ArrayColumn;
@@ -343,7 +357,7 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
             static foreach (i; 0 .. U.tupleof.length)
             {
                 static if (!hasUDA!(U.tupleof[i], IgnoreField))
-                    value.tupleof[i] = readValue!(typeof(U.tupleof[i]))(tuple.elements[positions[k++]], row);
+                    setField(value.tupleof[i], readValue!(typeof(U.tupleof[i]))(tuple.elements[positions[k++]], row));
             }
             return value;
         }
@@ -371,14 +385,14 @@ struct RowRange(T) if (is(T == struct))
     }
 
     /// Whether all rows have been consumed. Reads from the network if needed.
-    @property bool empty() @safe
+    @property bool empty()
     {
         load();
         return !loaded;
     }
 
     /// The current row.
-    @property T front() @safe
+    @property T front()
     {
         load();
         assert(loaded, "RowRange.front called on an empty range");
@@ -386,7 +400,7 @@ struct RowRange(T) if (is(T == struct))
     }
 
     /// Moves to the next row.
-    void popFront() @safe
+    void popFront()
     {
         load();
         assert(loaded, "RowRange.popFront called on an empty range");
@@ -408,7 +422,7 @@ struct RowRange(T) if (is(T == struct))
         block = null;
     }
 
-    private void load() @safe
+    private void load()
     {
         if (loaded)
             return;
@@ -462,7 +476,7 @@ package Column[] bindColumns(T)(Block block) @safe
 }
 
 /// Builds a `T` from `row` of the columns returned by `bindColumns`.
-package T readStruct(T)(Column[] bound, size_t row) @safe
+package T readStruct(T)(Column[] bound, size_t row)
 {
     T value;
     size_t k;
@@ -472,7 +486,7 @@ package T readStruct(T)(Column[] bound, size_t row) @safe
         {
             static assert(isMappableValue!(typeof(T.tupleof[i])), T.stringof ~ "." ~ __traits(identifier,
                     T.tupleof[i]) ~ ": fields of type " ~ typeof(T.tupleof[i]).stringof ~ " cannot be mapped");
-            value.tupleof[i] = readValue!(typeof(T.tupleof[i]))(bound[k++], row);
+            setField(value.tupleof[i], readValue!(typeof(T.tupleof[i]))(bound[k++], row));
         }
     }
     return value;
@@ -500,6 +514,18 @@ private template fieldColumnName(T, size_t i)
         enum fieldColumnName = getUDAs!(T.tupleof[i], ColumnName)[0].name;
     else
         enum fieldColumnName = __traits(identifier, T.tupleof[i]);
+}
+
+/// `target = source`.
+private void setField(T)(ref T target, T source)
+{
+    target = source;
+}
+
+/// ditto: assigning a `std.variant.Variant` is memory-safe, but std.variant is not annotated @safe.
+private void setField(ref Variant target, Variant source) @trusted
+{
+    target = source;
 }
 
 private ClientException outOfRange(U)(const Column column) @safe
@@ -813,4 +839,63 @@ private string columnList(Block block) @safe
     assert(a.getString(0) == "['00:00:01','-00:00:02']" && readValue!(Duration[])(a, 0) == [
         1.seconds, -2.seconds
     ]);
+}
+
+@system unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.factory : createColumn;
+
+    // std.variant.Variant: the held value of any column, NULL as an empty Variant
+    static struct Row
+    {
+        uint id;
+        Variant v;
+    }
+
+    auto c = createColumn("v", "Variant(Date, Int64, String)");
+    appendValue(c, Variant(5));
+    appendValue(c, Variant("x"));
+    appendValue(c, Variant.init);
+    appendValue(c, Variant(Date(2020, 1, 2)));
+    assert(c.getString(0) == "5" && c.getString(1) == "x" && c.isNull(2) && c.getString(3) == "2020-01-02");
+    assert(readValue!Variant(c, 0).get!long == 5 && !readValue!Variant(c, 2).hasValue);
+    auto n = createColumn("n", "Nullable(UInt8)");
+    appendValue(n, 7);
+    appendValue(n, null);
+    assert(readValue!Variant(n, 0).get!ubyte == 7 && !readValue!Variant(n, 1).hasValue);
+    assertThrown!ClientException(appendValue(c, Variant([1, 2])));
+    assert(c.length == 4 && isMappableValue!Row && !isTupleValue!Variant);
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.insert : appendValue;
+    import clickhoused.types.decimal : Decimal;
+    import clickhoused.types.factory : createColumn;
+    import clickhoused.types.ip : IPv4;
+
+    // Values without a typed append choose the matching Variant alternative, not String
+    static struct Pair
+    {
+        ubyte a;
+        string b;
+    }
+
+    auto c = createColumn("v", "Variant(Array(UInt8), Decimal(9, 2), IPv4, Map(String, UInt8), String, "
+            ~ "Tuple(a UInt8, b String))");
+    appendValue(c, [ubyte(1), 2]);
+    appendValue(c, Decimal.fromString("1.5"));
+    appendValue(c, IPv4(0x01020304));
+    appendValue(c, ["k": ubyte(7)]);
+    appendValue(c, Pair(3, "x"));
+    appendValue(c, "text");
+    const string[] expected = ["[1,2]", "1.5", "1.2.3.4", "{'k':7}", "(3,'x')", "text"];
+    foreach (i, e; expected)
+        assert(c.getString(i) == e, c.getString(i));
+    assert(readValue!(ubyte[])(c, 0) == [1, 2] && readValue!Pair(c, 4) == Pair(3, "x"));
+    assertThrown!ClientException(appendValue(c, [1.5]));
+    assert(c.length == 6);
 }

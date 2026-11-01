@@ -26,11 +26,16 @@ package struct TextElement
     Kind kind; ///
     string text; ///
 
-    /// Appends the element to `column`: NULL as `appendNull`, everything else as `appendString`.
+    /// Appends the element to `column`: NULL as `appendNull`, everything else as `appendString`
+    /// (for a Variant column, choosing the alternative by whether the text was quoted).
     void appendTo(Column column) const @safe
     {
+        import clickhoused.types.variant : VariantColumn;
+
         if (kind == Kind.null_)
             column.appendNull();
+        else if (auto variant = cast(VariantColumn) column)
+            variant.appendTextElement(text, kind == Kind.quoted); // `1` and `'1'` go to different alternatives
         else
             column.appendString(text);
     }

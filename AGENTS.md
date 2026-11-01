@@ -74,7 +74,7 @@ source/clickhoused/        library:
   types/                   column.d (Column base: typed getters, FixedColumn!T), factory.d (createColumn), array.d (ArrayColumn),
                            lowcardinality.d (LowCardinalityColumn), wideint.d (Int128…UInt256, WideIntColumn),
                            decimal.d (Decimal, DecimalColumn), ip.d (IPv4, IPv6 and their columns),
-                           tuple.d (TupleColumn), map.d (MapColumn), geo.d (GeoPoint, geo type aliases), textlist.d (parsing [..], (..) and {k:v}
+                           tuple.d (TupleColumn), map.d (MapColumn), geo.d (GeoPoint, geo type aliases), variant.d (VariantColumn, Geometry), textlist.d (parsing [..], (..) and {k:v}
                            text for appendString),
                            numeric.d (+ BFloat16Column), floattext.d (formatFloat: server float text), string.d,
                            datetime.d (+ resolveTimeZone), time.d (TimeColumn, Time64Column), misc.d (UUID, Enum, Nullable, Nothing),
@@ -263,8 +263,8 @@ The first implementation supports **basic types only**:
 - `UUID`, `Enum8`/`Enum16`;
 - `Nullable(T)` of the types above.
 
-`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5), `Tuple` (#6), `Map` (#7), geo types (#19), `BFloat16` (#20), `Time`/`Time64` (#21) and `Nested` (#22) are supported too. Everything else comes later (tracking issue #10):
-- Variant/Dynamic/JSON (#9).
+`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5), `Tuple` (#6), `Map` (#7), geo types (#19), `BFloat16` (#20), `Time`/`Time64` (#21), `Nested` (#22) and `Variant` (#29) are supported too. Everything else comes later (tracking issue #10):
+- Dynamic (#30), JSON (#31); Variant (#29) is done. Design for all three: PLAN.md §14.
 
 These types are implemented (milestone M2). An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
 
@@ -287,6 +287,8 @@ Time (#21): `Time` is an `Int32` of seconds, `Time64(p)` an `Int64` of 10^-p sec
 BFloat16 (#20): the upper 16 bits of a Float32. The server converts to it by truncation (`BFloat16(Float32)` keeps the high half), not round-to-nearest; `BFloat16Column` does the same, except that a NaN stays a NaN. Not on 23.8.
 
 Nested (#22): with `flatten_nested = 1` (default) the server splits `n Nested(a T, b U)` into columns `n.a Array(T)`, `n.b Array(U)` and checks on insert that a row's arrays have equal lengths. With `flatten_nested = 0` (session setting at CREATE time) the column keeps the type `Nested(a T, b U)`, sent with that name and exactly the bytes of `Array(Tuple(a T, b U))` (same on 23.8 and 26.11); `createColumn` builds that ArrayColumn under the Nested name. Subcolumns `n.a` can still be selected. Nested can nest; Nullable/LowCardinality of it are invalid.
+
+Variant (#29): the type name lists the alternatives sorted by name, which numbers them (`Geometry` is the exception: a fixed order `LineString, MultiLineString, MultiPolygon, Point, Polygon, Ring, MultiPoint`, MultiPoint added in 2026). Prefix: `UInt64` discriminators mode, 0 (basic) in Native, then the alternatives' prefixes; data: `UInt8` discriminator per row (255 = NULL), then each alternative's column for its rows. No Nullable alternatives, no Nullable/LowCardinality of Variant. The server refuses "similar" alternatives (Date with DateTime64, String with LowCardinality(String), ...) unless `allow_suspicious_variant_types=1`. `toString` of a NULL Variant differs by version (`ᴺᵁᴸᴸ` on 25.8, empty on 26.x). Types with a `@system` copy (std.variant.Variant) need attribute inference in the mapping templates: don't put explicit `@safe` back on `RowRange`, `readStruct`, `query!T`, `queryRow!T`, `queryValue!T`, `insert`.
 
 Geo types (#19): named aliases (`Point` = `Tuple(Float64, Float64)`, `Ring`/`LineString` = `Array(Point)`, `Polygon` = `Array(Ring)`, `MultiLineString` = `Array(LineString)`, `MultiPolygon` = `Array(Polygon)`); the server sends the alias names and the underlying wire format. 23.8 has Point, Ring, Polygon, MultiPolygon only; LineString/MultiLineString and `Geometry` (a Variant, #9) are newer.
 
