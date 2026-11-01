@@ -4,7 +4,7 @@ Column types. Importing this package imports all column classes and
 
 Supported ClickHouse types:
 $(UL
-    $(LI `UInt8`…`UInt64`, `Int8`…`Int64`, `Float32`, `Float64`, `Bool` (`clickhoused.types.numeric`);)
+    $(LI `UInt8`…`UInt64`, `Int8`…`Int64`, `Float32`, `Float64`, `BFloat16`, `Bool` (`clickhoused.types.numeric`);)
     $(LI `String`, `FixedString(N)` (`clickhoused.types.string`);)
     $(LI `Date`, `Date32`, `DateTime`, `DateTime64` (`clickhoused.types.datetime`);)
     $(LI `UUID`, `Enum8`, `Enum16`, `Nullable(T)`, `Nothing` (`clickhoused.types.misc`).)

@@ -153,6 +153,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
         return new Float32Column(name, typeName);
     case "Float64":
         return new Float64Column(name, typeName);
+    case "BFloat16":
+        return new BFloat16Column(name, typeName);
     case "Bool":
         return new BoolColumn(name, typeName);
     case "String":
@@ -296,7 +298,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
 
     // Native-format round trip for every supported column type
     static immutable string[] types = [
-        "Int64", "Float64", "Bool", "String", "FixedString(2)", "Date", "Date32", "DateTime('UTC')",
+        "Int64", "Float64", "BFloat16", "Bool", "String", "FixedString(2)", "Date", "Date32",
+        "DateTime('UTC')",
         "DateTime64(3, 'UTC')", "UUID", "Enum8('a' = 1, 'b' = 2)", "Nullable(String)",
         "Nullable(Nothing)", "Array(Int64)", "Array(Nullable(String))", "Array(Array(Date))",
         "Array(Nothing)", "LowCardinality(String)", "LowCardinality(Nullable(String))",
@@ -404,6 +407,8 @@ version (unittest)
             x.data = [UInt256.max, UInt256(7)];
         else if (auto x = cast(Float64Column) c)
             x.data = [-0.5, 1e300];
+        else if (auto x = cast(BFloat16Column) c)
+            x.data = [0xBFC0, 0x7F80];
         else if (auto x = cast(BoolColumn) c)
             x.data = [true, false];
         else if (auto x = cast(StringColumn) c)

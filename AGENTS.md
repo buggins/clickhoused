@@ -76,7 +76,8 @@ source/clickhoused/        library:
                            decimal.d (Decimal, DecimalColumn), ip.d (IPv4, IPv6 and their columns),
                            tuple.d (TupleColumn), map.d (MapColumn), geo.d (GeoPoint, geo type aliases), textlist.d (parsing [..], (..) and {k:v}
                            text for appendString),
-                           numeric.d, string.d, datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
+                           numeric.d (+ BFloat16Column), floattext.d (formatFloat: server float text), string.d,
+                           datetime.d (+ resolveTimeZone), misc.d (UUID, Enum, Nullable, Nothing),
                            parser.d (type-name parser), package.d (imports all)
   compress/                cityhash.d (CityHash v1.0.2 port, MIT), lz4.d (LZ4 block codec), zstd.d (libzstd binding,
                            `zstd` configuration only), frame.d (Compression enum, frames, CompressedInput/Output)
@@ -278,6 +279,10 @@ Column conventions:
 - Every column also implements the appenders that mirror the getters: `appendLong`, `appendUlong`, `appendDouble`, `appendBool`, `appendString` (parses non-string types), `appendBytes`, `appendDate`, `appendSysTime`, `appendUUID`, `appendNull` (Nullable only), `appendDefault`, and `truncate`.
   - Conversions are range-checked, and a failed append must leave the column unchanged.
   - `appendString` for DateTime types parses the text in the column timezone.
+
+Float text: the server writes floats as the shortest decimal that reads back exactly (dragonbox/zmij), in plain notation when the decimal point position n (value = 0.digits × 10^n) satisfies -6 < n <= 21, else `d.ddde-7` (no `+`); every NaN is `nan`, negative zero `-0`. `formatFloat` (`types/floattext.d`) reproduces it with exact big-integer digit generation; it was checked against ~765k server values (same on 23.8 and 26.x).
+
+BFloat16 (#20): the upper 16 bits of a Float32. The server converts to it by truncation (`BFloat16(Float32)` keeps the high half), not round-to-nearest; `BFloat16Column` does the same, except that a NaN stays a NaN. Not on 23.8.
 
 Geo types (#19): named aliases (`Point` = `Tuple(Float64, Float64)`, `Ring`/`LineString` = `Array(Point)`, `Polygon` = `Array(Ring)`, `MultiLineString` = `Array(LineString)`, `MultiPolygon` = `Array(Polygon)`); the server sends the alias names and the underlying wire format. 23.8 has Point, Ring, Polygon, MultiPolygon only; LineString/MultiLineString and `Geometry` (a Variant, #9) are newer.
 

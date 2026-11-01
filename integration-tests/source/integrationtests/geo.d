@@ -6,15 +6,7 @@ import std.exception : enforce;
 
 import clickhoused;
 import integrationtests.basic : firstBlock;
-import integrationtests.server : connectToServer;
-
-/// Whether the server knows the data type `name` (LineString is newer than 23.8).
-private bool hasType(Connection conn, string name)
-{
-    return conn.queryValue!ulong("SELECT count() FROM system.data_type_families WHERE name = {n:String}", null, [
-        "n": name
-    ]) > 0;
-}
+import integrationtests.server : connectToServer, hasType;
 
 /// Every geo type: getString must equal the server's toString(), and the column keeps the geo type name.
 void testGeoRead()
