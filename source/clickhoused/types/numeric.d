@@ -446,24 +446,15 @@ final class BoolColumn : Column
         return data.length;
     }
 
+    /// Reads the bytes in one piece; any non-zero byte is `true`.
     override void readData(BufferedReader reader, size_t rows) @safe
     {
-        data = null;
-        ubyte[] chunk;
-        while (data.length < rows)
-        {
-            const count = rows - data.length < readChunkRows ? rows - data.length : readChunkRows;
-            chunk.length = count;
-            reader.readExact(chunk);
-            foreach (b; chunk)
-                data ~= b != 0;
-        }
+        data = readFlags(reader, rows);
     }
 
     override void writeData(BufferedWriter writer) const @safe
     {
-        foreach (v; data)
-            writer.writeByte(v ? 1 : 0);
+        writer.writeBytes(bytesOf(data)); // a bool is one byte holding 0 or 1
     }
 
     override bool getBool(size_t row) const @safe

@@ -32,6 +32,53 @@ Larger counts grow step by step (see `growRows`).
 +/
 package enum size_t upfrontRows = 1024 * 1024;
 
+/++
+`data` grown to `length` elements, keeping its values; the new elements are
+not initialized, so the caller fills them right away. Only for element types
+without indirections, where uninitialized values are just arbitrary bits.
+(Growing with `.length` would first fill the new elements with `T.init`:
+`NaN` for floating-point types, an element-by-element loop.)
++/
+package T[] growUninitialized(T)(T[] data, size_t length) @safe pure nothrow
+{
+    import std.array : uninitializedArray;
+    import std.traits : hasIndirections;
+
+    static assert(!hasIndirections!T, T.stringof ~ " has indirections");
+    auto grown = uninitializedArray!(T[])(length);
+    grown[0 .. data.length] = data[];
+    return grown;
+}
+
+/// The bytes of `values`, for types whose memory is their wire format (fixed-width numbers, `bool`, `UUID`).
+package inout(ubyte)[] bytesOf(T)(inout(T)[] values) @trusted pure nothrow @nogc
+{
+    import std.traits : hasIndirections;
+
+    static assert(!hasIndirections!T, T.stringof ~ " has indirections");
+    return cast(inout(ubyte)[]) values; // plain bytes of plain values: no pointers involved
+}
+
+/++
+Reads `rows` one-byte flags (`Bool` values, NULL maps) into a new `bool[]`,
+in one piece; any non-zero byte becomes `true`, so that every `bool` holds 0
+or 1.
++/
+package bool[] readFlags(BufferedReader reader, size_t rows) @safe
+{
+    bool[] flags;
+    while (flags.length < rows)
+    {
+        const start = flags.length;
+        flags = growUninitialized(flags, growRows(start, rows));
+        auto bytes = bytesOf(flags[start .. $]);
+        reader.readExact(bytes);
+        foreach (ref b; bytes)
+            b = b != 0;
+    }
+    return flags;
+}
+
 /// The next length of an array being filled with `rows` values, now holding `filled` of them.
 package size_t growRows(size_t filled, size_t rows) @safe pure nothrow @nogc
 {
@@ -337,8 +384,7 @@ abstract class FixedColumn(T) : Column if (isFixedWireType!T)
         while (data.length < rows)
         {
             const start = data.length;
-            const count = rows - start < readChunkRows ? rows - start : readChunkRows;
-            data.length = start + count;
+            data = growUninitialized(data, growRows(start, rows));
             readFixedValues(reader, data[start .. $]);
         }
     }

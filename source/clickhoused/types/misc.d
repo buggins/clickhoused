@@ -38,24 +38,32 @@ final class UUIDColumn : Column
         return data.length;
     }
 
+    /// Reads the values in one piece, then converts their byte order in place.
     override void readData(BufferedReader reader, size_t rows) @safe
     {
         data = null;
-        data.reserve(rows < readChunkRows ? rows : readChunkRows);
-        ubyte[16] wire;
-        foreach (i; 0 .. rows)
+        while (data.length < rows)
         {
-            reader.readExact(wire[]);
-            data ~= UUID(swapHalves(wire));
+            const start = data.length;
+            data = growUninitialized(data, growRows(start, rows));
+            auto bytes = bytesOf(data[start .. $]); // a UUID is its 16 bytes
+            reader.readExact(bytes);
+            reverseHalves(bytes);
         }
     }
 
+    /// Writes the values in chunks, converting their byte order on the way.
     override void writeData(BufferedWriter writer) const @safe
     {
-        foreach (ref v; data)
+        enum chunkValues = 4096;
+        ubyte[] buffer = new ubyte[16 * (data.length < chunkValues ? data.length : chunkValues)];
+        for (size_t i = 0; i < data.length; i += chunkValues)
         {
-            const wire = swapHalves(v.data);
-            writer.writeBytes(wire[]);
+            const values = data[i .. i + chunkValues < data.length ? i + chunkValues : data.length];
+            auto bytes = buffer[0 .. 16 * values.length];
+            bytes[] = bytesOf(values)[];
+            reverseHalves(bytes);
+            writer.writeBytes(bytes);
         }
     }
 
@@ -113,15 +121,24 @@ final class UUIDColumn : Column
             throw appendError("string", value);
     }
 
-    private static ubyte[16] swapHalves(const ubyte[16] bytes) @safe pure nothrow @nogc
+    /++
+    Converts between the wire form (two little-endian 64-bit halves) and the
+    byte order of `UUID` (big-endian), for whole values: reverses each group
+    of 8 bytes.
+    +/
+    private static void reverseHalves(ubyte[] bytes) @trusted pure nothrow @nogc
     {
-        ubyte[16] r;
-        foreach (i; 0 .. 8)
+        import core.bitop : bswap;
+        import core.stdc.string : memcpy;
+
+        assert(bytes.length % 8 == 0);
+        for (size_t i = 0; i < bytes.length; i += 8) // within `bytes`: its length is a multiple of 8
         {
-            r[i] = bytes[7 - i];
-            r[8 + i] = bytes[15 - i];
+            ulong v = void;
+            memcpy(&v, bytes.ptr + i, 8);
+            v = bswap(v);
+            memcpy(bytes.ptr + i, &v, 8);
         }
-        return r;
     }
 }
 
@@ -287,16 +304,7 @@ final class NullableColumn : Column
 
     override void readData(BufferedReader reader, size_t rows) @safe
     {
-        nulls = null;
-        ubyte[] chunk;
-        while (nulls.length < rows)
-        {
-            const count = rows - nulls.length < readChunkRows ? rows - nulls.length : readChunkRows;
-            chunk.length = count;
-            reader.readExact(chunk);
-            foreach (b; chunk)
-                nulls ~= b != 0;
-        }
+        nulls = readFlags(reader, rows);
         nested.readData(reader, rows);
     }
 
@@ -304,8 +312,7 @@ final class NullableColumn : Column
     {
         if (nested.length != nulls.length)
             throw new ClientException("Column '" ~ name ~ "': NULL flags and values differ in length");
-        foreach (n; nulls)
-            writer.writeByte(n ? 1 : 0);
+        writer.writeBytes(bytesOf(nulls)); // a bool is one byte holding 0 or 1
         nested.writeData(writer);
     }
 
@@ -611,4 +618,47 @@ final class NothingColumn : Column
     assert(n.nulls == [false, true] && (cast(UInt8Column) n.nested).data == [7, 0]);
     assertThrown!ClientException(n.appendLong(300));
     assert(n.length == 2); // a failed append leaves the column unchanged
+}
+
+@safe unittest
+{
+    import std.uuid : randomUUID;
+    import clickhoused.io.mock : MockTransport;
+    import clickhoused.types.factory : createColumn;
+    import clickhoused.types.numeric : BoolColumn, Int8Column;
+
+    // Flags read in one piece: any non-zero byte is true, and is written back as 1
+    auto t = new MockTransport;
+    t.feed(cast(const(ubyte)[])[0, 1, 2, 255, 0, 7, 8, 9]);
+    auto r = new BufferedReader(t);
+    auto b = new BoolColumn("b");
+    b.readData(r, 4);
+    assert(b.data == [false, true, true, true]);
+    auto n = cast(NullableColumn) createColumn("n", "Nullable(Int8)");
+    n.readData(r, 2);
+    assert(n.nulls == [false, true] && (cast(Int8Column) n.nested).data == [8, 9]);
+    auto w = new MockTransport;
+    auto writer = new BufferedWriter(w);
+    b.writeData(writer);
+    n.writeData(writer);
+    writer.flush();
+    assert(w.written == [0, 1, 1, 1, 0, 1, 8, 9]);
+
+    // UUIDs over several write chunks keep their values and byte order
+    auto u = new UUIDColumn("u");
+    foreach (i; 0 .. 10_000)
+        u.data ~= randomUUID();
+    u.data ~= UUID("00112233-4455-6677-8899-aabbccddeeff");
+    auto ut = new MockTransport;
+    auto uw = new BufferedWriter(ut);
+    u.writeData(uw);
+    uw.flush();
+    assert(ut.written[$ - 16 .. $] == [
+        0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0xff, 0xee, 0xdd, 0xcc, 0xbb,
+        0xaa, 0x99, 0x88
+    ]);
+    ut.feed(ut.written);
+    auto back = new UUIDColumn("u");
+    back.readData(new BufferedReader(ut), u.data.length);
+    assert(back.data == u.data);
 }
