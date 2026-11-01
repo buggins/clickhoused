@@ -17,6 +17,7 @@ import integrationtests.basic;
 import integrationtests.compression;
 import integrationtests.concurrency;
 import integrationtests.decimal;
+import integrationtests.floats;
 import integrationtests.geo;
 import integrationtests.insert;
 import integrationtests.ip;
@@ -106,6 +107,9 @@ immutable TestCase[] allTests = [
     TestCase("Map: insert and struct mapping", &testMapInsert, true),
     TestCase("Geo types: read", &testGeoRead, true),
     TestCase("Geo types: insert and struct mapping", &testGeoInsert, true),
+    TestCase("Float32/Float64: text", &testFloatText, true),
+    TestCase("BFloat16: read", &testBFloat16Read, true),
+    TestCase("BFloat16: insert and struct mapping", &testBFloat16Insert, true),
     TestCase("TLS: connection details", &testTlsConnection, true, true),
     TestCase("TLS: certificate verification", &testTlsVerification, true, true),
     TestCase("TLS: client certificate login", &testTlsCertificateLogin, true, true),

@@ -60,3 +60,11 @@ Connection connectToServer()
 {
     return new Connection(serverOptions());
 }
+
+/// Whether the server knows the data type `name` (types such as LineString or BFloat16 are newer than 23.8).
+bool hasType(Connection conn, string name)
+{
+    return conn.queryValue!ulong("SELECT count() FROM system.data_type_families WHERE name = {n:String}", null, [
+        "n": name
+    ]) > 0;
+}
