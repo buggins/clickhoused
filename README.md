@@ -178,6 +178,7 @@ Call `loadOpenSsl()` at startup to fail early, or `loadOpenSsl(sslPath, cryptoPa
 | `Tuple(T1, ...)`, named too | `TupleColumn` | a struct or `std.typecons.Tuple` (by element name if named, else by position) |
 | `Map(K, V)` | `MapColumn` | `V[K]`, or `Tuple!(K, V)[]` to keep order and repeated keys |
 | `Point`, `Ring`, `LineString`, `MultiLineString`, `Polygon`, `MultiPolygon` | `TupleColumn`, `ArrayColumn` | `GeoPoint`, `GeoPoint[]`, `GeoPoint[][]`, `GeoPoint[][][]` |
+| `Nested(a T, b U)` | with `flatten_nested = 1` (the default): separate `Array` columns `n.a`, `n.b`; with `flatten_nested = 0`: `ArrayColumn` of a named `TupleColumn` | `T[]` per column (`@column("n.a")`), or an array of structs with fields `a`, `b` |
 | `LowCardinality(T)`, also in arrays | `LowCardinalityColumn`; `block.column!StringColumn(...)` etc. return its decoded values | as for `T` |
 
 ## Limitations

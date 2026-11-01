@@ -263,8 +263,8 @@ The first implementation supports **basic types only**:
 - `UUID`, `Enum8`/`Enum16`;
 - `Nullable(T)` of the types above.
 
-`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5), `Tuple` (#6), `Map` (#7), geo types (#19), `BFloat16` (#20) and `Time`/`Time64` (#21) are supported too. Everything else comes later (tracking issue #10):
-- Nested (#22), Variant/Dynamic/JSON (#9).
+`Array(T)` (#1), `LowCardinality(T)` (#2) and `Int128`/`UInt128`/`Int256`/`UInt256` (#4) `Decimal` (#3), `IPv4`/`IPv6` (#5), `Tuple` (#6), `Map` (#7), geo types (#19), `BFloat16` (#20), `Time`/`Time64` (#21) and `Nested` (#22) are supported too. Everything else comes later (tracking issue #10):
+- Variant/Dynamic/JSON (#9).
 
 These types are implemented (milestone M2). An unsupported type must fail with a clear `ClientException` that names the type, never with a desynchronized stream.
 
@@ -285,6 +285,8 @@ Float text: the server writes floats as the shortest decimal that reads back exa
 Time (#21): `Time` is an `Int32` of seconds, `Time64(p)` an `Int64` of 10^-p second ticks (a Decimal64 on the server, p 0 to 9). Signed spans within ±999:59:59 (server conversions saturate there; our appenders throw). Text `[-]hh:mm:ss[.fff]`: 2 hour digits, 3 from 100 hours on, exactly p fraction digits, sign kept for `-00:00:00.25`; quoted inside arrays. The server parses `h:mm:ss` (1–3 hour digits), `m:ss`, `s`, without checking minutes/seconds against 60. Since 25.6; before 25.12 it needs `enable_time_time64_type=1` (the tests `SET` it), and on 25.x `toTime` is an older, different function: use `CAST(x AS Time)`.
 
 BFloat16 (#20): the upper 16 bits of a Float32. The server converts to it by truncation (`BFloat16(Float32)` keeps the high half), not round-to-nearest; `BFloat16Column` does the same, except that a NaN stays a NaN. Not on 23.8.
+
+Nested (#22): with `flatten_nested = 1` (default) the server splits `n Nested(a T, b U)` into columns `n.a Array(T)`, `n.b Array(U)` and checks on insert that a row's arrays have equal lengths. With `flatten_nested = 0` (session setting at CREATE time) the column keeps the type `Nested(a T, b U)`, sent with that name and exactly the bytes of `Array(Tuple(a T, b U))` (same on 23.8 and 26.11); `createColumn` builds that ArrayColumn under the Nested name. Subcolumns `n.a` can still be selected. Nested can nest; Nullable/LowCardinality of it are invalid.
 
 Geo types (#19): named aliases (`Point` = `Tuple(Float64, Float64)`, `Ring`/`LineString` = `Array(Point)`, `Polygon` = `Array(Ring)`, `MultiLineString` = `Array(LineString)`, `MultiPolygon` = `Array(Polygon)`); the server sends the alias names and the underlying wire format. 23.8 has Point, Ring, Polygon, MultiPolygon only; LineString/MultiLineString and `Geometry` (a Variant, #9) are newer.
 
