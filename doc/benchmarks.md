@@ -149,6 +149,49 @@ ZSTD (a separate run, `--override-config clickhoused/zstd`): frame encode 225 MB
 - **INSERT with addRow or structs** runs at about 4.5 million rows/s and allocates about 145 bytes per row, against 31 million rows/s for whole blocks.
 - **Text of floats and dates is slow**: `getString` of a `Float64` costs about 30 µs and 3 KB per value (the exact shortest-decimal path through BigInt), of a `DateTime64` about 2.4 µs and 160 bytes.
 
+## Server suite
+
+`--suite server` runs SELECT, INSERT and round trips against a real server given by `CLICKHOUSE_HOST` (with `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD`); INSERT tables are created in the database `clickhoused_bench`. Use a release build of the server, for example:
+
+```sh
+docker run -d --name clickhoused-bench268 -p 19268:9000 -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+    --ulimit nofile=262144:262144 clickhouse/clickhouse-server:26.8
+CLICKHOUSE_HOST=localhost:19268 dub run :bench -b release -- --suite server
+CLICKHOUSE_HOST=localhost:19268 sh bench/server-reference.sh   # the same queries with ClickHouse's own client
+```
+
+The times include the server's work and the (local) network. `bench/server-reference.sh` measures the same SELECTs with `clickhouse-client --format Null --time` (the server's cost plus a fast C++ client that decodes the blocks) and `SELECT 1` round trips with `clickhouse benchmark`.
+
+### Results (2026-11-01, clickhoused 0.6.0)
+
+Server 26.8.36.3 in Docker on the same machine (load average below 1–4 during the runs); LDC 1.36, `-b release`; two rounds, min times. SELECTs generate their rows on the server (`numbers(N)`; the 4 columns are `number`, `toString(number)`, `number / 7` and a `DateTime64(3)`).
+
+| case | rows | min ms | Mrows/s | clickhouse-client ms |
+|---|---:|---:|---:|---:|
+| select numbers, drained | 10M | 18.1–24.3 | 410–550 | 20–22 |
+| select numbers, column read | 10M | 19.4–19.5 | ~515 | |
+| select 4 columns, drained | 5M | 102–122 | 41–49 | 43–83 |
+| select 4 columns, drained, LZ4 | 5M | 237–321 | 16–21 | 202–280 |
+| select 4 columns, column read | 5M | 162–171 | 29–31 | |
+| select 4 columns, `query!T` | 5M | 298–339 | 15–17 | |
+| select 4 columns, per-cell getters | 5M | 219–229 | 22–23 | |
+| insert into `Null`, blocks | 2M | 48–58 | 35–41 | |
+| insert into `Null`, blocks, LZ4 | 2M | 213–224 | 9 | |
+| insert into `Null`, `addRow` | 2M | 112–136 | 15–18 | |
+| insert into `Null`, structs | 2M | 120–127 | 16–17 | |
+| insert into `MergeTree`, blocks | 2M | 162–190 | 11–12 | |
+| insert into `MergeTree`, `addRow` | 2M | 230–269 | 7–9 | |
+| `SELECT 1` round trip | 1,000 | 1.3–1.6 s | (1.3–1.6 ms each) | 1.45–1.8 ms each |
+| `ping` | 1,000 | 220–248 | (0.22–0.25 ms each) | |
+| pool lock and release | 10,000 | 2.6–3.3 | (0.3 µs each) | |
+
+Observations:
+- Numbers come in as fast as with ClickHouse's own client. With strings in the result, clickhoused takes about 1.5–2 times as long as `clickhouse-client` (whose C++ decoder is faster on strings); with LZ4 both are dominated by compression and close.
+- On a local connection compression only adds work, in both directions; it pays off on real networks.
+- `SELECT 1` latency is the server's query overhead: `clickhouse benchmark` gets the same 1.5–1.8 ms per query. A `ping` takes about 0.25 ms.
+- Each `SELECT 1` allocates about 24 KB in the client (mostly the profile-events block that comes with every query); not a latency issue, but a candidate for later.
+- Not covered yet: TLS, and fiber mode (the benchmark subpackage does not depend on vibe-core).
+
 ## Performance changes
 
 Each change is measured back to back against a build of the previous commit, on the same machine in the same session (min times; the machine is noisy, so the ranges come from several rounds).
