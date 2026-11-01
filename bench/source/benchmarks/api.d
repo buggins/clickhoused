@@ -353,6 +353,8 @@ BenchCase[] apiCases()
     cases ~= cellCase("getString DateTime64(3)", "DateTime64(3, 'UTC')", specs[3], (c, r) => c.getString(r)
             .length,
             100_000);
+    cases ~= cellCase("getSysTime DateTime64(3, Europe/Lisbon)", "DateTime64(3, 'Europe/Lisbon')", specs[3],
+            (c, r) => c.getSysTime(r).stdTime);
     cases ~= cellCase("getString Decimal(18, 4)", "Decimal(18, 4)", Spec("c", "", (c, r) {
             c.appendLong(cast(long)(mix(r) % 1_000_000_000));
         }), (c, r) => c.getString(r).length, 100_000);

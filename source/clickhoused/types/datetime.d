@@ -17,6 +17,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types.datetime;
 
+import std.typecons : Rebindable;
 import core.time : dur;
 import std.datetime.date : Date, DateTime;
 import std.datetime.systime : SysTime, unixTimeToStdTime;
@@ -433,10 +434,19 @@ immutable(TimeZone) resolveTimeZone(string name) @safe
 {
     if (name.length == 0 || name == "UTC")
         return UTC();
+    // Columns pass the same string for every cell: check it by identity before hashing
+    if (name is lastZoneName)
+        return lastZone;
+    CachedZone entry;
     if (auto cached = name in timeZoneCache)
-        return cached.zone;
-    auto entry = new CachedZone(loadTimeZone(name));
-    timeZoneCache[name] = entry;
+        entry = *cached;
+    else
+    {
+        entry = new CachedZone(loadTimeZone(name));
+        timeZoneCache[name] = entry;
+    }
+    lastZoneName = name;
+    lastZone = entry.zone;
     return entry.zone;
 }
 
@@ -501,6 +511,8 @@ private final class CachedZone
 }
 
 private CachedZone[string] timeZoneCache;
+private string lastZoneName; // the last name `resolveTimeZone` looked up (per thread) and its zone
+private Rebindable!(immutable TimeZone) lastZone;
 
 private long floorDiv(long a, long b) @safe pure nothrow @nogc
 {
@@ -663,4 +675,21 @@ private string formatDateTime(SysTime time, uint precision, long fraction = 0) @
     if (precision)
         s ~= format(".%0*d", precision, fraction);
     return s;
+}
+
+@safe unittest
+{
+    // The last lookup is remembered by identity; alternating names still give the right zones
+    version (Windows)
+    {
+    }
+    else
+    {
+        const lisbon = resolveTimeZone("Europe/Lisbon");
+        const tokyo = resolveTimeZone("Asia/Tokyo");
+        assert(resolveTimeZone("Europe/Lisbon") is lisbon && resolveTimeZone("Asia/Tokyo") is tokyo);
+        assert(lisbon !is tokyo && resolveTimeZone("UTC") is UTC());
+        const copy = "Europe/" ~ "Lisbon"; // equal but not identical: found through the cache
+        assert(resolveTimeZone(copy) is lisbon);
+    }
 }
