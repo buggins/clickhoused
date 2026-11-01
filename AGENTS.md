@@ -88,7 +88,8 @@ integration-tests-phobos/  runner for thread mode
 integration-tests-vibe/    runner for fiber mode: depends on vibe-core and runs the tests inside a vibe task
 integration-tests-vibe1/   the same fiber-mode tests against vibe-core 1.22.6 (sources shared with integration-tests-vibe)
 examples/                  dub subpackages: basic (`:example-basic`), vibe (`:example-vibe`); read CLICKHOUSE_DSN
-bench/                     (planned) benchmarks
+bench/                     benchmarks (dub subpackage `:bench`, local runs only): runner.d (cases, timing, GC stats),
+                           offline.d (decode/encode from memory); results and baseline in doc/benchmarks.md
 ```
 
 To add an integration test, write a `void function()` that throws on failure in an `integrationtests.*` module, and append it to `allTests` (set `needsServer` if it talks to ClickHouse). Mode-specific tests are registered by the runners:
@@ -137,6 +138,7 @@ dub test -c zstd                              # unit tests including the libzstd
 dub run dscanner@0.15.2 -- --styleCheck .                 # lint (CI fails on any warning)
 dub run dfmt@0.15.2 -- --inplace $(git ls-files '*.d')    # format (CI fails if this changes files)
 dub build -b docs                                         # generate API docs into /docs/
+dub run :bench -b release [-- --filter decode/]          # benchmarks (doc/benchmarks.md); compare the min column
 ```
 
 Run the lint and format commands before committing D code. The tool versions are pinned so CI results stay stable. dfmt 0.15.2 mangles lambdas with attributes (`() nothrow {` becomes `() nothrow{`), so use named nested functions instead. It also merges `@safe return` into `@safereturn`; avoid the `return` attribute. dfmt sometimes needs two passes to settle; run it twice when it changes files.
@@ -333,4 +335,4 @@ These are proposed; refine them when code lands.
   - M6: ddbc driver (done, in ddbc 0.8.0);
   - M7: hibernated dialect (hibernated PR #99);
   - M8: TLS (done, 0.2.0), composite and extended types (#1–#7 done, 0.3.0; #8 split into #19–#22: #19–#21 in 0.4.0, #22 in 0.5.0) and production features;
-  - M9: Variant/Dynamic/JSON (#9 split into #29–#31, done, 0.5.0), then benchmarks, API freeze → 1.0.
+  - M9: Variant/Dynamic/JSON (#9 split into #29–#31, done, 0.5.0), then benchmarks (PLAN.md §15; #36 harness), API freeze → 1.0.
