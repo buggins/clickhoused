@@ -11,7 +11,9 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module app;
 
-import benchmarks.offline : basicCases;
+import benchmarks.api : apiCases;
+import benchmarks.compression : compressionCases;
+import benchmarks.offline : basicCases, compositeCases;
 import benchmarks.runner : csvHeader, csvRow, markdownHeader, markdownRow, Result, runAll;
 
 int main(string[] args)
@@ -50,7 +52,8 @@ int main(string[] args)
 
     import core.time : dur;
 
-    const results = runAll(basicCases(), filter, rows, runs, dur!"msecs"(cast(long)(minTime * 1000)), &report);
+    auto cases = basicCases() ~ compositeCases() ~ compressionCases() ~ apiCases();
+    const results = runAll(cases, filter, rows, runs, dur!"msecs"(cast(long)(minTime * 1000)), &report);
     if (csv.length)
     {
         auto f = File(csv, "w");
