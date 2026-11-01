@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
+## Unreleased
+
+### Changed
+- **LZ4 is much faster** (#40): decompression about 6–7 times (about 4 GB/s on the benchmark machine), compression about 2 times. SELECTs with `compression = lz4` read up to twice as fast. Same API and the same checks of malformed input. Benchmarks: `dub run :bench -b release`, results in `doc/benchmarks.md`.
+
 ## 0.5.0 — 2026-11-01
 
 Variant, Dynamic and JSON (#29–#31, from the split of #9) and Nested (#22): with this release every column type of tracking issue #10 is supported. New types use the client-friendly native forms that recent servers offer, requested automatically (`ConnectionOptions.simpleNativeFormats`).

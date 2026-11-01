@@ -25,49 +25,10 @@ size_t lz4CompressBound(size_t inputSize) @safe pure nothrow @nogc
 /// Compresses `src` into an LZ4 block.
 ubyte[] lz4Compress(scope const(ubyte)[] src) @safe pure nothrow
 {
-    auto dst = new ubyte[lz4CompressBound(src.length)];
-    size_t op;
-    size_t anchor;
+    import std.array : uninitializedArray;
 
-    if (src.length > mfLimit)
-    {
-        uint[1 << hashLog] table; // position + 1 of the last occurrence of each hash; 0 = none
-        const matchLimit = src.length - lastLiterals;
-        size_t ip;
-        uint misses;
-        while (ip + mfLimit < src.length)
-        {
-            const sequence = read32(src, ip);
-            const h = hash(sequence);
-            const candidate = table[h];
-            table[h] = cast(uint)(ip + 1);
-            if (candidate != 0)
-            {
-                size_t from = candidate - 1;
-                if (ip - from <= maxOffset && read32(src, from) == sequence)
-                {
-                    size_t start = ip;
-                    size_t length = minMatch;
-                    while (start + length < matchLimit && src[from + length] == src[start + length])
-                        length++;
-                    while (start > anchor && from > 0 && src[start - 1] == src[from - 1])
-                    {
-                        start--;
-                        from--;
-                        length++;
-                    }
-                    op = writeSequence(dst, op, src[anchor .. start], start - from, length);
-                    ip = start + length;
-                    anchor = ip;
-                    misses = 0;
-                    continue;
-                }
-            }
-            ip += 1 + (misses++ >> 6); // skip faster through incompressible data
-        }
-    }
-    op = writeLastLiterals(dst, op, src[anchor .. $]);
-    return dst[0 .. op];
+    auto dst = uninitializedArray!(ubyte[])(lz4CompressBound(src.length));
+    return dst[0 .. compressBlock(src, dst)];
 }
 
 /++
@@ -78,49 +39,10 @@ Throws: `ProtocolException` if the block is malformed or does not expand to
 +/
 ubyte[] lz4Decompress(scope const(ubyte)[] src, size_t decompressedSize) @safe pure
 {
-    auto dst = new ubyte[decompressedSize];
-    size_t ip;
-    size_t op;
-    for (;;)
-    {
-        if (ip >= src.length)
-            throw corrupt();
-        const token = src[ip++];
+    import std.array : uninitializedArray;
 
-        size_t literals = token >> 4;
-        if (literals == 15)
-            literals += readLength(src, ip);
-        if (literals > src.length - ip || literals > dst.length - op)
-            throw corrupt();
-        dst[op .. op + literals] = src[ip .. ip + literals];
-        ip += literals;
-        op += literals;
-        if (ip == src.length)
-            break; // the last sequence has no match
-
-        if (src.length - ip < 2)
-            throw corrupt();
-        const offset = src[ip] | (src[ip + 1] << 8);
-        ip += 2;
-        if (offset == 0 || offset > op)
-            throw corrupt();
-        size_t length = (token & 0x0F) + minMatch;
-        if ((token & 0x0F) == 15)
-            length += readLength(src, ip);
-        if (length > dst.length - op)
-            throw corrupt();
-        const from = op - offset;
-        if (offset >= length)
-            dst[op .. op + length] = dst[from .. from + length];
-        else
-        {
-            // Overlapping copy: repeats the last `offset` bytes
-            foreach (i; 0 .. length)
-                dst[op + i] = dst[from + i];
-        }
-        op += length;
-    }
-    if (op != dst.length)
+    auto dst = uninitializedArray!(ubyte[])(decompressedSize);
+    if (!decompressBlock(src, dst))
         throw corrupt();
     return dst;
 }
@@ -189,6 +111,36 @@ ubyte[] lz4Decompress(scope const(ubyte)[] src, size_t decompressedSize) @safe p
 
 @safe pure unittest
 {
+    // Repeats at every short distance and length, also close to the end of the output, where the decoder
+    // switches from 8-byte copies to exact ones
+    foreach (period; 1 .. 17)
+        foreach (length; [4, 5, 7, 8, 9, 15, 16, 17, 19, 31, 64, 300])
+            foreach (tail; [5, 6, 8, 12, 13, 20, 40])
+            {
+                ubyte[] input;
+                foreach (i; 0 .. period)
+                    input ~= cast(ubyte)(i * 37 + 11);
+                foreach (i; 0 .. length)
+                    input ~= input[$ - period];
+                foreach (i; 0 .. tail)
+                    input ~= cast(ubyte)(i * 91 + 5);
+                assert(lz4Decompress(lz4Compress(input), input.length) == input);
+            }
+
+    // Hand-made blocks: "abc", a match at distance 3 of length 16, then 5 literals; and a block with extra
+    // length bytes (literal count 15 + 0, match length 4 + 15 + 1)
+    const ubyte[] block = [0x3C, 'a', 'b', 'c', 0x03, 0x00, 0x50, 'v', 'w', 'x', 'y', 'z'];
+    assert(lz4Decompress(block, 3 + 16 + 5) == cast(const(ubyte)[]) "abcabcabcabcabcabcavwxyz");
+    const ubyte[] longCodes = [
+        0xFF, 0, 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', 0x01, 0x00,
+        1, 0x50,
+        'a', 'b', 'c', 'd', 'e'
+    ];
+    assert(lz4Decompress(longCodes, 15 + 20 + 5) == cast(const(ubyte)[]) "pqrstuvwxyz012333333333333333333333abcde");
+}
+
+@safe pure unittest
+{
     import std.exception : assertThrown;
 
     // Malformed blocks are rejected, never read or written out of bounds
@@ -225,68 +177,255 @@ enum size_t lastLiterals = 5; // the last bytes are always literals
 enum size_t maxOffset = 65_535;
 enum uint hashLog = 12;
 
-uint read32(scope const(ubyte)[] s, size_t i) @safe pure nothrow @nogc
+/++
+Compresses `src` into `dst` (at least `lz4CompressBound(src.length)` bytes) and
+returns the compressed size.
+
+Pointer code, for speed: reads stay within `src` (the match search stops
+`mfLimit` bytes before its end, 8-byte reads `lastLiterals` before it), and
+`dst` is large enough for the worst case.
++/
+size_t compressBlock(scope const(ubyte)[] src, scope ubyte[] dst) @trusted pure nothrow @nogc
 {
-    return s[i] | (s[i + 1] << 8) | (s[i + 2] << 16) | (cast(uint) s[i + 3] << 24);
+    assert(dst.length >= lz4CompressBound(src.length));
+    const(ubyte)* base = src.ptr;
+    const(ubyte)* anchor = base;
+    ubyte* op = dst.ptr;
+    if (src.length > mfLimit)
+    {
+        uint[1 << hashLog] table = 0; // position + 1 of the last occurrence of each hash; 0 = none
+        const(ubyte)* ip = base;
+        const(ubyte)* searchEnd = base + src.length - mfLimit; // a match starts before this
+        const(ubyte)* matchLimit = base + src.length - lastLiterals; // and ends before this
+        uint misses;
+        while (ip < searchEnd)
+        {
+            const sequence = load32(ip);
+            const h = hash(sequence);
+            const candidate = table[h];
+            table[h] = cast(uint)(ip - base + 1);
+            if (candidate != 0)
+            {
+                const(ubyte)* from = base + (candidate - 1);
+                if (ip - from <= maxOffset && load32(from) == sequence)
+                {
+                    const(ubyte)* end = extendMatch(ip + minMatch, from + minMatch, matchLimit);
+                    const(ubyte)* start = ip;
+                    while (start > anchor && from > base && start[-1] == from[-1])
+                    {
+                        start--;
+                        from--;
+                    }
+                    op = writeSequence(op, anchor, start - anchor, start - from, end - start);
+                    ip = end;
+                    anchor = ip;
+                    misses = 0;
+                    continue;
+                }
+            }
+            ip += 1 + (misses++ >> 6); // skip faster through incompressible data
+        }
+    }
+    op = writeLiterals(op, anchor, base + src.length - anchor, true);
+    return op - dst.ptr;
+}
+
+/++
+The end of the match that continues at `s` with the earlier bytes at `m`,
+stopping at `limit`. Compares 8 bytes at a time.
++/
+const(ubyte)* extendMatch(const(ubyte)* s, const(ubyte)* m, const(ubyte)* limit) @system pure nothrow @nogc
+{
+    version (LittleEndian)
+    {
+        import core.bitop : bsf;
+
+        while (limit - s >= 8)
+        {
+            const diff = load64(s) ^ load64(m);
+            if (diff != 0)
+                return s + (bsf(diff) >> 3); // the first differing byte
+            s += 8;
+            m += 8;
+        }
+    }
+    while (s < limit && *s == *m)
+    {
+        s++;
+        m++;
+    }
+    return s;
+}
+
+/// Writes a sequence: token, literals, offset and match length.
+ubyte* writeSequence(ubyte* op, const(ubyte)* literals, size_t count, size_t offset, size_t matchLength) @system pure
+nothrow @nogc
+{
+    const matchCode = matchLength - minMatch;
+    op = writeLiterals(op, literals, count, false, matchCode < 15 ? matchCode : 15);
+    *op++ = cast(ubyte) offset;
+    *op++ = cast(ubyte)(offset >> 8);
+    if (matchCode >= 15)
+        op = writeLength(op, matchCode - 15);
+    return op;
+}
+
+/// Writes a token (with `matchCode` in the low bits) and `count` literals.
+ubyte* writeLiterals(ubyte* op, const(ubyte)* literals, size_t count, bool last, size_t matchCode = 0) @system pure
+nothrow @nogc
+{
+    import core.stdc.string : memcpy;
+
+    *op++ = cast(ubyte)((count < 15 ? count : 15) << 4 | (last ? 0 : matchCode));
+    if (count >= 15)
+        op = writeLength(op, count - 15);
+    memcpy(op, literals, count);
+    return op + count;
+}
+
+/// Writes the extra bytes of a length above 14.
+ubyte* writeLength(ubyte* op, size_t value) @system pure nothrow @nogc
+{
+    while (value >= 255)
+    {
+        *op++ = 255;
+        value -= 255;
+    }
+    *op++ = cast(ubyte) value;
+    return op;
+}
+
+/++
+Decodes the block `src` into `dst`, which it must fill exactly. Returns false
+if the block is malformed.
+
+Pointer code, for speed. Every length is checked against the ends of both
+buffers before it is used; copies of a fixed 8 or 16 bytes, which may run past
+the end of a literal run or match, are used only where at least that much room
+is left.
++/
+bool decompressBlock(scope const(ubyte)[] src, scope ubyte[] dst) @trusted pure nothrow @nogc
+{
+    import core.stdc.string : memcpy;
+
+    if (src.length == 0)
+        return false;
+    const(ubyte)* ip = src.ptr;
+    const(ubyte)* iend = ip + src.length;
+    const start = dst.ptr;
+    ubyte* op = dst.ptr;
+    const oend = start + dst.length;
+    for (;;)
+    {
+        if (ip >= iend)
+            return false;
+        const token = *ip++;
+
+        size_t literals = token >> 4;
+        if (literals == 15 && !addLength(ip, iend, literals))
+            return false;
+        if (literals <= 16 && iend - ip >= 16 && oend - op >= 16)
+            memcpy(op, ip, 16); // the common short run: one fixed-size copy
+        else if (literals <= cast(size_t)(iend - ip) && literals <= cast(size_t)(oend - op))
+            memcpy(op, ip, literals);
+        else
+            return false;
+        ip += literals;
+        op += literals;
+        if (ip == iend)
+            break; // the last sequence has no match
+
+        if (iend - ip < 2)
+            return false;
+        const offset = ip[0] | (ip[1] << 8);
+        ip += 2;
+        if (offset == 0 || offset > op - start)
+            return false;
+        size_t length = (token & 0x0F) + minMatch;
+        if ((token & 0x0F) == 15 && !addLength(ip, iend, length))
+            return false;
+        if (length > cast(size_t)(oend - op))
+            return false;
+
+        const(ubyte)* from = op - offset;
+        const end = op + length;
+        if (cast(size_t)(oend - op) >= length + 8)
+        {
+            if (offset < 8)
+            {
+                // A short repeat: extend it byte by byte until it can be read from a multiple of `offset`
+                // at least 8 bytes back, then copy 8 bytes at a time from there
+                const period = offset * ((8 + offset - 1) / offset);
+                size_t first = period - offset;
+                if (first > length)
+                    first = length;
+                foreach (i; 0 .. first)
+                    op[i] = from[i];
+                op += first;
+                if (op < end)
+                    from = op - period; // at or after `start`: `first` = `period - offset` here
+            }
+            while (op < end)
+            {
+                memcpy(op, from, 8); // the source ends at or before `op`
+                op += 8;
+                from += 8;
+            }
+        }
+        else
+        {
+            foreach (i; 0 .. length) // near the end of the output: exact copy
+                op[i] = from[i];
+        }
+        op = dst.ptr + (end - start);
+    }
+    return op == oend;
+}
+
+/// Adds the extra length bytes that follow a length code of 15 to `total`; false if they run past `iend`.
+bool addLength(ref const(ubyte)* ip, const(ubyte)* iend, ref size_t total) @system pure nothrow @nogc
+{
+    ubyte b;
+    do
+    {
+        if (ip >= iend)
+            return false;
+        b = *ip++;
+        total += b;
+    }
+    while (b == 255);
+    return true;
+}
+
+/// Reads 4 bytes, little-endian, at any alignment.
+uint load32(const(ubyte)* p) @system pure nothrow @nogc
+{
+    import core.stdc.string : memcpy;
+
+    uint v = void;
+    memcpy(&v, p, 4);
+    version (BigEndian)
+    {
+        import core.bitop : bswap;
+
+        v = bswap(v);
+    }
+    return v;
+}
+
+/// Reads 8 bytes in memory order, at any alignment.
+ulong load64(const(ubyte)* p) @system pure nothrow @nogc
+{
+    import core.stdc.string : memcpy;
+
+    ulong v = void;
+    memcpy(&v, p, 8);
+    return v;
 }
 
 uint hash(uint sequence) @safe pure nothrow @nogc
 {
     return (sequence * 2_654_435_761U) >> (32 - hashLog);
-}
-
-size_t writeLength(ubyte[] dst, size_t op, size_t value) @safe pure nothrow @nogc
-{
-    while (value >= 255)
-    {
-        dst[op++] = 255;
-        value -= 255;
-    }
-    dst[op++] = cast(ubyte) value;
-    return op;
-}
-
-size_t writeSequence(ubyte[] dst, size_t op, scope const(ubyte)[] literals, size_t offset,
-        size_t matchLength) @safe pure nothrow @nogc
-{
-    const matchCode = matchLength - minMatch;
-    const count = literals.length;
-    dst[op++] = cast(ubyte)((count < 15 ? count : 15) << 4 | (matchCode < 15 ? matchCode : 15));
-    if (count >= 15)
-        op = writeLength(dst, op, count - 15);
-    dst[op .. op + literals.length] = literals[];
-    op += literals.length;
-    dst[op++] = cast(ubyte) offset;
-    dst[op++] = cast(ubyte)(offset >> 8);
-    if (matchCode >= 15)
-        op = writeLength(dst, op, matchCode - 15);
-    return op;
-}
-
-size_t writeLastLiterals(ubyte[] dst, size_t op, scope const(ubyte)[] literals) @safe pure nothrow @nogc
-{
-    const count = literals.length;
-    dst[op++] = cast(ubyte)((count < 15 ? count : 15) << 4);
-    if (count >= 15)
-        op = writeLength(dst, op, count - 15);
-    dst[op .. op + literals.length] = literals[];
-    return op + literals.length;
-}
-
-/// Reads the extra length bytes that follow a length code of 15.
-size_t readLength(scope const(ubyte)[] src, ref size_t ip) @safe pure
-{
-    size_t total;
-    ubyte b;
-    do
-    {
-        if (ip >= src.length)
-            throw corrupt();
-        b = src[ip++];
-        total += b;
-    }
-    while (b == 255);
-    return total;
 }
 
 ProtocolException corrupt() @safe pure nothrow
