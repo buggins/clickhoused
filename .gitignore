@@ -37,3 +37,4 @@ __dummy.html
 /examples/*/example-*
 /integration-tests-vibe1/integration-tests-vibe1
 /integration-tests-vibe1/clickhoused_integration-tests-vibe1
+/bench/clickhoused-bench
