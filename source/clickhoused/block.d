@@ -8,7 +8,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 module clickhoused.block;
 
 import clickhoused.exception : ClientException, ProtocolException;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, readString, readUVarInt, writeString, writeUVarInt;
 import clickhoused.protocol.codes : Revision;
 import clickhoused.types.column : Column;
 import clickhoused.types.factory : createColumn;

@@ -17,7 +17,7 @@ module clickhoused.types.json;
 import std.variant : Variant;
 
 import clickhoused.exception : ClientException, ProtocolException;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, readString, writeString;
 import clickhoused.types.column : appendFast, Column, growRows, makeVariant;
 
 /++

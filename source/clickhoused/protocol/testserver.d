@@ -11,7 +11,7 @@ module clickhoused.protocol.testserver;
 
 version (unittest)  : import clickhoused.block : Block, readBlock, writeBlock;
 import clickhoused.connection : Connection;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, writeString, writeUVarInt;
 import clickhoused.io.mock : MockTransport;
 import clickhoused.io.transport : Transport;
 import clickhoused.protocol.codes : Revision, ServerPacket;

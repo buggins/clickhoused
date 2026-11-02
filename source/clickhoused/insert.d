@@ -43,6 +43,7 @@ import clickhoused.types.wideint : isWideInt, WideIntColumn;
 import clickhoused.types.column : Column;
 import clickhoused.types.factory : createColumn;
 import clickhoused.types.parser : parseType;
+import clickhoused.io.buffer : readString, readUVarInt;
 
 // Moved in 0.9 (re-exported, so imports of them from here keep working)
 public import clickhoused.literal : quoteIdentifier;

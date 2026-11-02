@@ -1,9 +1,10 @@
 /++
-Buffered reader and writer over a `Transport`, with the primitive encodings of
-the ClickHouse native protocol:
+Buffered reader and writer (from `dbwire.io.buffer`, re-exported here) and the
+primitive encodings of the ClickHouse native protocol, as free functions
+called with UFCS (`reader.readUVarInt()`):
 $(UL
     $(LI unsigned LEB128 variable-length integers (`UVarInt`);)
-    $(LI fixed-size little-endian integers and floats;)
+    $(LI fixed-size little-endian integers and floats (`readFixed`, `writeFixed`);)
     $(LI strings: a `UVarInt` length followed by the bytes.)
 )
 
@@ -12,312 +13,107 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.io.buffer;
 
-import std.traits : isFloatingPoint, isIntegral, isSomeChar;
+public import dbwire.io.buffer;
 
-import clickhoused.exception : ConnectionException, ProtocolException;
-import clickhoused.io.transport : Transport;
-
-/// Default size of the read and write buffers.
-enum size_t defaultBufferSize = 64 * 1024;
-
-/// Default limit for a single string received from the server (1 GiB).
-enum size_t defaultMaxStringLength = 1024 * 1024 * 1024;
+import clickhoused.exception : ProtocolException;
 
 /++
-Storage for decoded strings: values are carved out of shared buffers, so
-decoding a column takes one allocation per buffer instead of one per value.
-The buffers start at `firstChunkSize` bytes and double up to `chunkSize`, so
-a column with little text wastes little; values longer than `chunkSize / 4`
-get their own allocation.
+Reads an unsigned LEB128 variable-length integer (at most 10 bytes).
 
-A slice handed out keeps its whole buffer alive. The arena never writes to a
-region again once handed out, which is what makes the slices immutable.
+Throws: `ProtocolException` if the encoding is longer than 10 bytes;
+`ConnectionException` if the stream ends first.
 +/
-package(clickhoused) struct StringArena
+ulong readUVarInt(BufferedReader reader) @safe
 {
-    /// Size of the largest shared buffers.
-    enum size_t chunkSize = 64 * 1024;
-    /// Size of the first buffer.
-    enum size_t firstChunkSize = 4 * 1024;
-
-    private ubyte[] chunk;
-    private size_t used;
-
-    /// A fresh region of `length` bytes, to be filled by the caller.
-    ubyte[] take(size_t length) @safe pure nothrow
+    const bytes = reader.window();
+    if (bytes.length >= 10)
     {
-        import std.array : uninitializedArray;
-
-        if (length > chunkSize / 4)
-            return uninitializedArray!(ubyte[])(length);
-        if (chunk.length - used < length)
-        {
-            size_t size = chunk.length ? chunk.length * 2 : firstChunkSize;
-            if (size > chunkSize)
-                size = chunkSize;
-            while (size < length)
-                size *= 2;
-            chunk = uninitializedArray!(ubyte[])(size);
-            used = 0;
-        }
-        auto region = chunk[used .. used + length];
-        used += length;
-        return region;
-    }
-}
-
-/// True for the types that `BufferedReader.readFixed` and `BufferedWriter.writeFixed` accept.
-enum isFixedWireType(T) = isIntegral!T || isFloatingPoint!T || is(T == bool) || isSomeChar!T;
-
-/// Reads protocol primitives from a `Transport` through an internal buffer.
-final class BufferedReader
-{
-    private Transport transport;
-    private ubyte[] buffer;
-    private size_t pos;
-    private size_t end;
-
-    /// Strings longer than this are rejected with a `ProtocolException`.
-    size_t maxStringLength = defaultMaxStringLength;
-
-    /++
-    Creates a reader.
-
-    Params:
-        transport = stream to read from.
-        bufferSize = size of the internal buffer.
-    +/
-    this(Transport transport, size_t bufferSize = defaultBufferSize) @safe
-    {
-        assert(bufferSize > 0);
-        this.transport = transport;
-        buffer = new ubyte[bufferSize];
-    }
-
-    /// Number of bytes already received and buffered but not consumed yet.
-    @property size_t buffered() const @safe pure nothrow
-    {
-        return end - pos;
-    }
-
-    /++
-    Fills `dst` completely.
-
-    Throws: `ConnectionException` if the stream ends first or on network errors.
-    +/
-    void readExact(scope ubyte[] dst) @safe
-    {
-        while (dst.length)
-        {
-            if (pos == end)
-            {
-                // Large reads go straight to the destination, bypassing the buffer.
-                if (dst.length >= buffer.length)
-                {
-                    const n = fillFrom(dst);
-                    dst = dst[n .. $];
-                    continue;
-                }
-                end = fillFrom(buffer);
-                pos = 0;
-            }
-            const n = dst.length < end - pos ? dst.length : end - pos;
-            dst[0 .. n] = buffer[pos .. pos + n];
-            pos += n;
-            dst = dst[n .. $];
-        }
-    }
-
-    /// Reads one byte.
-    ubyte readByte() @safe
-    {
-        if (pos == end)
-        {
-            end = fillFrom(buffer);
-            pos = 0;
-        }
-        return buffer[pos++];
-    }
-
-    /++
-    Reads an unsigned LEB128 variable-length integer (at most 10 bytes).
-
-    Throws: `ProtocolException` if the encoding is longer than 10 bytes.
-    +/
-    ulong readUVarInt() @safe
-    {
+        // Enough bytes buffered for the longest encoding: decode in place
         ulong result;
-        foreach (i; 0 .. 10)
+        foreach (i, b; bytes[0 .. 10])
         {
-            const b = readByte();
             result |= cast(ulong)(b & 0x7F) << (7 * i);
             if ((b & 0x80) == 0)
-                return result;
-        }
-        throw new ProtocolException("Variable-length integer is longer than 10 bytes");
-    }
-
-    /// Reads a fixed-size little-endian value.
-    T readFixed(T)() @safe if (isFixedWireType!T)
-    {
-        ubyte[T.sizeof] bytes;
-        readExact(bytes[]);
-        return fromLittleEndian!T(bytes);
-    }
-
-    /++
-    Reads a `UVarInt` length followed by that many bytes, as a string.
-
-    The content is not validated as UTF-8: ClickHouse strings are arbitrary bytes.
-
-    Throws: `ProtocolException` if the length exceeds `maxStringLength`.
-    +/
-    string readString() @safe
-    {
-        return cast(string) readBytes();
-    }
-
-    /++
-    Reads a length-prefixed string into `arena`: short strings share its
-    buffers, so a column of many values needs few allocations.
-
-    Throws: `ProtocolException` if the length exceeds `maxStringLength`.
-    +/
-    string readString(ref StringArena arena) @safe
-    {
-        const len = readUVarInt();
-        if (len > maxStringLength)
-            throw new ProtocolException("String length exceeds the limit");
-        auto bytes = arena.take(cast(size_t) len);
-        readExact(bytes);
-        return (() @trusted => cast(string) bytes)(); // the arena never hands out or writes these bytes again
-    }
-
-    /// Like `readString`, but returns the raw bytes.
-    immutable(ubyte)[] readBytes() @safe
-    {
-        const len = readUVarInt();
-        if (len > maxStringLength)
-            throw new ProtocolException("String length exceeds the limit");
-        auto data = new ubyte[cast(size_t) len];
-        readExact(data);
-        return (() @trusted => cast(immutable(ubyte)[]) data)(); // data is unique: just allocated
-    }
-
-    private size_t fillFrom(scope ubyte[] dst) @safe
-    {
-        const n = transport.read(dst);
-        if (n == 0)
-            throw new ConnectionException("Connection closed by the server");
-        return n;
-    }
-}
-
-/// Writes protocol primitives to a `Transport` through an internal buffer.
-/// Nothing reaches the network until `flush` is called or the buffer fills up.
-final class BufferedWriter
-{
-    private Transport transport;
-    private ubyte[] buffer;
-    private size_t used;
-
-    /++
-    Creates a writer.
-
-    Params:
-        transport = stream to write to.
-        bufferSize = size of the internal buffer.
-    +/
-    this(Transport transport, size_t bufferSize = defaultBufferSize) @safe
-    {
-        assert(bufferSize > 0);
-        this.transport = transport;
-        buffer = new ubyte[bufferSize];
-    }
-
-    /// Appends raw bytes.
-    void writeBytes(scope const(ubyte)[] data) @safe
-    {
-        if (data.length > buffer.length - used)
-        {
-            flush();
-            if (data.length >= buffer.length)
             {
-                transport.write(data);
-                return;
+                reader.consume(i + 1);
+                return result;
             }
         }
-        buffer[used .. used + data.length] = data[];
-        used += data.length;
+        throw tooLong();
     }
-
-    /// Appends one byte.
-    void writeByte(ubyte b) @safe
+    ulong result;
+    foreach (i; 0 .. 10)
     {
-        if (used == buffer.length)
-            flush();
-        buffer[used++] = b;
+        const b = reader.readByte();
+        result |= cast(ulong)(b & 0x7F) << (7 * i);
+        if ((b & 0x80) == 0)
+            return result;
     }
-
-    /// Appends an unsigned LEB128 variable-length integer.
-    void writeUVarInt(ulong value) @safe
-    {
-        do
-        {
-            ubyte b = value & 0x7F;
-            value >>= 7;
-            if (value)
-                b |= 0x80;
-            writeByte(b);
-        }
-        while (value);
-    }
-
-    /// Appends a fixed-size little-endian value.
-    void writeFixed(T)(T value) @safe if (isFixedWireType!T)
-    {
-        auto bytes = toLittleEndian(value);
-        writeBytes(bytes[]);
-    }
-
-    /// Appends a `UVarInt` length followed by the bytes of `s`.
-    void writeString(scope const(char)[] s) @safe
-    {
-        writeUVarInt(s.length);
-        writeBytes(cast(const(ubyte)[]) s);
-    }
-
-    /// Sends all buffered bytes to the transport.
-    void flush() @safe
-    {
-        if (used)
-        {
-            transport.write(buffer[0 .. used]);
-            used = 0;
-        }
-    }
+    throw tooLong();
 }
 
-/// Decodes a little-endian value of type `T`.
-T fromLittleEndian(T)(const ubyte[T.sizeof] bytes) @safe pure nothrow @nogc if (isFixedWireType!T)
-{
-    import std.bitmanip : littleEndianToNative;
+/++
+Reads a `UVarInt` length followed by that many bytes, as a string.
 
-    static if (is(T == bool))
-        return bytes[0] != 0;
-    else
-        return littleEndianToNative!T(bytes);
+The content is not validated as UTF-8: ClickHouse strings are arbitrary bytes.
+
+Throws: `ProtocolException` if the length exceeds `BufferedReader.maxStringLength`.
++/
+string readString(BufferedReader reader) @safe
+{
+    return reader.readExactString(lengthOf(reader.readUVarInt()));
 }
 
-/// Encodes `value` as little-endian bytes.
-ubyte[T.sizeof] toLittleEndian(T)(T value) @safe pure nothrow @nogc if (isFixedWireType!T)
-{
-    import std.bitmanip : nativeToLittleEndian;
+/++
+Reads a length-prefixed string into `arena`: short strings share its
+buffers, so a column of many values needs few allocations.
 
-    static if (is(T == bool))
-        return [value ? 1 : 0];
-    else
-        return nativeToLittleEndian(value);
+Throws: `ProtocolException` if the length exceeds `BufferedReader.maxStringLength`.
++/
+string readString(BufferedReader reader, ref StringArena arena) @safe
+{
+    return reader.readExactString(lengthOf(reader.readUVarInt()), arena);
+}
+
+/// Like `readString`, but returns the raw bytes.
+immutable(ubyte)[] readBytes(BufferedReader reader) @safe
+{
+    return reader.readExactBytes(lengthOf(reader.readUVarInt()));
+}
+
+/// Appends an unsigned LEB128 variable-length integer.
+void writeUVarInt(BufferedWriter writer, ulong value) @safe
+{
+    auto space = writer.reserve(10);
+    size_t n;
+    do
+    {
+        ubyte b = value & 0x7F;
+        value >>= 7;
+        if (value)
+            b |= 0x80;
+        space[n++] = b;
+    }
+    while (value);
+    writer.commit(n);
+}
+
+/// Appends a `UVarInt` length followed by the bytes of `s`.
+void writeString(BufferedWriter writer, scope const(char)[] s) @safe
+{
+    writer.writeUVarInt(s.length);
+    writer.writeBytes(cast(const(ubyte)[]) s);
+}
+
+/// A received length as `size_t` (lengths beyond `size_t` fail the `maxStringLength` check).
+private size_t lengthOf(ulong length) @safe pure nothrow @nogc
+{
+    return length > size_t.max ? size_t.max : cast(size_t) length;
+}
+
+private ProtocolException tooLong() @safe pure nothrow
+{
+    return new ProtocolException("Variable-length integer is longer than 10 bytes");
 }
 
 ///
@@ -330,6 +126,7 @@ ubyte[T.sizeof] toLittleEndian(T)(T value) @safe pure nothrow @nogc if (isFixedW
     writer.writeUVarInt(300);
     writer.writeFixed!int(-2);
     writer.writeString("hello");
+    writer.writeString("ab");
     writer.flush();
 
     transport.feed(transport.written); // read back what was written
@@ -337,6 +134,7 @@ ubyte[T.sizeof] toLittleEndian(T)(T value) @safe pure nothrow @nogc if (isFixedW
     assert(reader.readUVarInt() == 300);
     assert(reader.readFixed!int() == -2);
     assert(reader.readString() == "hello");
+    assert(reader.readBytes() == ['a', 'b']);
 }
 
 @safe unittest
@@ -355,22 +153,33 @@ ubyte[T.sizeof] toLittleEndian(T)(T value) @safe pure nothrow @nogc if (isFixedW
         0x00, 0x7F, 0x80, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01
     ]);
 
-    transport.feed(transport.written);
-    auto reader = new BufferedReader(transport);
-    assert(reader.readUVarInt() == 0);
-    assert(reader.readUVarInt() == 127);
-    assert(reader.readUVarInt() == 128);
-    assert(reader.readUVarInt() == ulong.max);
+    // Decoded both from the buffer (fast path) and byte by byte (near the end of the data)
+    foreach (chunk; [size_t.max, 1])
+    {
+        transport.feed(transport.written);
+        transport.maxChunk = chunk;
+        auto reader = new BufferedReader(transport);
+        assert(reader.readUVarInt() == 0);
+        assert(reader.readUVarInt() == 127);
+        assert(reader.readUVarInt() == 128);
+        assert(reader.readUVarInt() == ulong.max);
+    }
 }
 
 @safe unittest
 {
     import std.exception : assertThrown;
+    import clickhoused.exception : ConnectionException;
     import clickhoused.io.mock : MockTransport;
 
-    // Too-long varint, oversized string and truncated input are rejected
+    // Too-long varint (both paths), oversized string and truncated input are rejected
+    const ubyte[] eleven = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01];
     auto transport = new MockTransport;
-    transport.feed([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01]);
+    transport.feed(eleven);
+    assertThrown!ProtocolException(new BufferedReader(transport).readUVarInt());
+    transport = new MockTransport;
+    transport.feed(eleven);
+    transport.maxChunk = 1;
     assertThrown!ProtocolException(new BufferedReader(transport).readUVarInt());
 
     transport = new MockTransport;
@@ -382,43 +191,6 @@ ubyte[T.sizeof] toLittleEndian(T)(T value) @safe pure nothrow @nogc if (isFixedW
     transport = new MockTransport;
     transport.feed([0x05, 'a', 'b']);
     assertThrown!ConnectionException(new BufferedReader(transport).readString());
-}
-
-@safe unittest
-{
-    import clickhoused.io.mock : MockTransport;
-
-    // Data split into 1-byte chunks and reads larger than the buffer
-    auto payload = new ubyte[1000];
-    foreach (i, ref b; payload)
-        b = cast(ubyte) i;
-    auto transport = new MockTransport;
-    transport.maxChunk = 1;
-    transport.feed(payload);
-    auto reader = new BufferedReader(transport, 16);
-    auto head = new ubyte[10];
-    reader.readExact(head);
-    assert(head == payload[0 .. 10]);
-    auto rest = new ubyte[990];
-    reader.readExact(rest);
-    assert(rest == payload[10 .. $]);
-
-    // Writes larger than the buffer
-    transport = new MockTransport;
-    auto writer = new BufferedWriter(transport, 16);
-    writer.writeByte(1);
-    writer.writeBytes(payload);
-    writer.flush();
-    assert(transport.written.length == 1001 && transport.written[1 .. $] == payload);
-}
-
-@safe unittest
-{
-    // Little-endian helpers
-    assert(toLittleEndian!uint(0x01020304) == [4, 3, 2, 1]);
-    assert(fromLittleEndian!short([0xFE, 0xFF]) == -2);
-    assert(fromLittleEndian!double(toLittleEndian(1.5)) == 1.5);
-    assert(toLittleEndian(true) == [1]);
 }
 
 @safe unittest

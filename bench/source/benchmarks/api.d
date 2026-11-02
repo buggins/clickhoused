@@ -14,7 +14,7 @@ import std.datetime.systime : SysTime;
 import clickhoused;
 import clickhoused.block : writeBlock;
 import clickhoused.compress.frame : CompressedOutput, Compression;
-import clickhoused.io.buffer : BufferedWriter;
+import clickhoused.io.buffer : BufferedWriter, writeString, writeUVarInt;
 import clickhoused.io.transport : Transport;
 import clickhoused.protocol.codes : Revision, ServerPacket;
 

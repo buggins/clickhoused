@@ -41,12 +41,7 @@ jobs:
       - name: Build library
         run: dub build
       - name: Unit tests
-        # The TLS unit tests skip when OpenSSL can't be loaded; the runners have it
-        # (Linux: the system library, macOS: Homebrew, Windows: OpenSSL in PATH)
-        env:
-          CLICKHOUSED_REQUIRE_OPENSSL: 1
-          # Checks the system's trusted certificates against a public server
-          CLICKHOUSED_TLS_PUBLIC_HOST: github.com:443
+        # (the TLS unit tests are in dbwire; TLS is tested here by the integration suite)
         run: dub test
       - name: Integration tests (threads)
         run: dub run :integration-tests-phobos

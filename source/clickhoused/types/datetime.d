@@ -17,7 +17,6 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types.datetime;
 
-import std.typecons : Rebindable;
 import core.time : dur;
 import std.datetime.date : Date, DateTime;
 import std.datetime.systime : SysTime, unixTimeToStdTime;
@@ -25,6 +24,7 @@ import std.datetime.timezone : TimeZone, UTC;
 import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
+public import dbwire.types.timezone : resolveTimeZone; // moved to dbwire in 0.9
 import clickhoused.types.column;
 
 /// Day number of 1970-01-01 in `std.datetime`'s Gregorian day count.
@@ -426,30 +426,6 @@ final class DateTime64Column : FixedColumn!long
     }
 }
 
-/++
-Returns the timezone named `name` (e.g. `"Europe/Lisbon"`), or UTC if `name` is
-empty or cannot be resolved. Results are cached per thread.
-+/
-immutable(TimeZone) resolveTimeZone(string name) @safe
-{
-    if (name.length == 0 || name == "UTC")
-        return UTC();
-    // Columns pass the same string for every cell: check it by identity before hashing
-    if (name is lastZoneName)
-        return lastZone;
-    CachedZone entry;
-    if (auto cached = name in timeZoneCache)
-        entry = *cached;
-    else
-    {
-        entry = new CachedZone(loadTimeZone(name));
-        timeZoneCache[name] = entry;
-    }
-    lastZoneName = name;
-    lastZone = entry.zone;
-    return entry.zone;
-}
-
 ///
 @safe unittest
 {
@@ -499,20 +475,6 @@ immutable(TimeZone) resolveTimeZone(string name) @safe
     }
     assert(resolveTimeZone("No/Such_Zone") is UTC());
 }
-
-private final class CachedZone
-{
-    immutable TimeZone zone;
-
-    this(immutable TimeZone zone) @safe pure nothrow
-    {
-        this.zone = zone;
-    }
-}
-
-private CachedZone[string] timeZoneCache;
-private string lastZoneName; // the last name `resolveTimeZone` looked up (per thread) and its zone
-private Rebindable!(immutable TimeZone) lastZone;
 
 private long floorDiv(long a, long b) @safe pure nothrow @nogc
 {
@@ -621,21 +583,6 @@ private ParsedDateTime parseDateTime(string value, string timezone, uint precisi
         tokyo.appendString("1970-01-01 09:00:00");
         assert(tokyo.data == [0]);
     }
-}
-
-private immutable(TimeZone) loadTimeZone(string name) @safe
-{
-    version (Posix)
-    {
-        import std.datetime.timezone : PosixTimeZone;
-
-        try
-            return PosixTimeZone.getTimeZone(name);
-        catch (Exception)
-            return UTC();
-    }
-    else
-        return UTC();
 }
 
 private Date dateFromDays(long days) @safe pure nothrow

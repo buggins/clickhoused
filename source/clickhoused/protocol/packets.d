@@ -11,7 +11,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 module clickhoused.protocol.packets;
 
 import clickhoused.exception : ClientException, ServerException;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, readString, readUVarInt, writeString, writeUVarInt;
 import clickhoused.protocol.codes;
 
 /// Client identity sent in the handshake and with every query.
