@@ -106,6 +106,15 @@ ins.finish();
 
 `ins.addStruct(s)` adds a struct instead. `conn.insert(table, block)` inserts a ready-made block, and `conn.insert(table, structs)` a range of structs. Values are converted to the column types with range checks.
 
+To transform rows on the server while inserting them, use the `input()` table function; the query must end with `FORMAT Native`, and the rows sent have the structure given to `input()`:
+
+```d
+auto ins = conn.beginInsert("INSERT INTO events SELECT id, parseDateTimeBestEffort(time), lower(name) "
+    ~ "FROM input('id UInt64, time String, name String') FORMAT Native");
+ins.addRow(1, "2026-11-02T10:00:00Z", "Login");
+ins.finish();
+```
+
 ### Connection pool
 
 ```d

@@ -76,6 +76,7 @@ immutable TestCase[] allTests = [
     TestCase("insert a block", &testInsertBlock, true),
     TestCase("large streaming insert", &testLargeInsert, true),
     TestCase("insert with defaults", &testInsertDefaults, true),
+    TestCase("insert with input()", &testInsertWithInput, true),
     TestCase("insert errors", &testInsertErrors, true),
     TestCase("network compression", &testCompression, true),
     TestCase("automatic I/O backend", &testIoBackendSelection, true),

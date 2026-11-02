@@ -68,7 +68,7 @@ package string geoUnderlyingType(string name) @safe pure nothrow @nogc
 // Golden bytes from `clickhouse client -q "SELECT ... FORMAT Native"` (data part), and mapping
 @safe unittest
 {
-    import clickhoused.insert : appendValue;
+    import clickhoused.mapping : appendValue;
     import clickhoused.io.buffer : BufferedReader;
     import clickhoused.io.mock : MockTransport;
     import clickhoused.mapping : readValue;

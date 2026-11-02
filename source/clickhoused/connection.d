@@ -23,7 +23,8 @@ module clickhoused.connection;
 import clickhoused.block : Block, readBlock, writeEmptyBlock;
 import clickhoused.compress.frame : CompressedInput, CompressedOutput, Compression, zstdAvailable;
 import clickhoused.exception;
-import clickhoused.insert : Inserter, quoteIdentifier;
+import clickhoused.insert : Inserter;
+import clickhoused.literal : quoteIdentifier;
 import clickhoused.mapping : RowRange;
 import clickhoused.io.backend : IoBackend, backendFor;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
@@ -274,8 +275,18 @@ final class Connection
     /++
     Starts an INSERT whose data is sent from the client.
 
+    The query can also transform the data on the server with the `input()`
+    table function; it must then end with `FORMAT Native` (the server rejects
+    it otherwise), and the rows sent have the structure given to `input()`:
+    ---
+    auto ins = conn.beginInsert("INSERT INTO t SELECT x * 2, upper(s) FROM input('x UInt32, s String') FORMAT Native");
+    ins.addRow(21, "abc"); // stored as (42, 'ABC')
+    ins.finish();
+    ---
+
     Params:
-        insertQuery = an INSERT without data, e.g. `INSERT INTO t (a, b) VALUES`.
+        insertQuery = an INSERT without data, e.g. `INSERT INTO t (a, b) VALUES`,
+            or an `INSERT ... SELECT ... FROM input(...) FORMAT Native`.
         settings = query settings, overriding `ConnectionOptions.settings`.
 
     Returns: an `Inserter` for sending the rows. The connection is busy until

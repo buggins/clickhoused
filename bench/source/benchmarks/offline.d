@@ -350,7 +350,7 @@ BenchCase[] compositeCases()
 {
     import std.format : format;
     import std.typecons : tuple, Tuple;
-    import clickhoused.insert : appendValue;
+    import clickhoused.mapping : appendValue;
 
     struct TypeCase
     {

@@ -213,3 +213,26 @@ private string quoteString(scope const(char)[] s) @safe pure
     }
     return r ~ "'";
 }
+
+/++
+Quotes a column or table name for use in SQL: `name` becomes `` `name` ``.
+Backquotes and backslashes inside the name are escaped.
++/
+string quoteIdentifier(string name) @safe pure
+{
+    string s = "`";
+    foreach (char c; name)
+    {
+        if (c == '`' || c == '\\')
+            s ~= '\\';
+        s ~= c;
+    }
+    return s ~ "`";
+}
+
+///
+@safe pure unittest
+{
+    assert(quoteIdentifier("price") == "`price`");
+    assert(quoteIdentifier("a`b") == "`a\\`b`");
+}

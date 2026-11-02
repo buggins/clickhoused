@@ -177,3 +177,29 @@ void testInsertErrors()
             .data == [12],
             "rows in ins_err");
 }
+
+/// INSERT ... SELECT ... FROM input(...) FORMAT Native: the server transforms the rows sent in input()'s structure.
+void testInsertWithInput()
+{
+    auto conn = connectToServer();
+    scope (exit)
+        conn.close();
+    conn.exec("CREATE TEMPORARY TABLE ins_input (id UInt64, day Date, name String) ENGINE = Memory");
+    auto ins = conn.beginInsert("INSERT INTO ins_input SELECT id * 10, toDate(time), lower(name) "
+            ~ "FROM input('id UInt32, time DateTime(''UTC''), name String') FORMAT Native");
+    scope (failure)
+        ins.abort();
+    enforce(ins.header.columns.length == 3 && ins.header.columns[0].name == "id"
+            && ins.header.columns[0].typeName == "UInt32" && ins.header.columns[1].name == "time",
+            "the header has input()'s structure");
+    ins.addRow(1, SysTime(DateTime(2026, 11, 2, 10, 0, 0), UTC()), "Login");
+    ins.addRow(2, SysTime(DateTime(2026, 11, 3, 23, 59, 59), UTC()), "LOGOUT");
+    ins.finish();
+    string[] rows;
+    foreach (block; conn.query("SELECT id, day, name FROM ins_input ORDER BY id"))
+        foreach (r; 0 .. block.rows)
+            rows ~= block.columns[0].getString(r) ~ " " ~ block.columns[1].getString(
+                    r) ~ " "
+                ~ block.columns[2].getString(r);
+    enforce(rows == ["10 2026-11-02 login", "20 2026-11-03 logout"], "rows: " ~ rows.to!string);
+}
