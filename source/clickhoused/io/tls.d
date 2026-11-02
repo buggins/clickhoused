@@ -371,7 +371,7 @@ final class TlsTransport : Transport
 
     version (unittest)
     {
-        /// How many `read` calls had to send data (e.g. a key update reply).
+        /// How many `read` calls had to send data (e.g. a queued key update).
         package size_t readsThatSent;
 
         /// Asks the peer to update its keys too; tests a read that has to send.
@@ -512,7 +512,7 @@ final class TlsTransport : Transport
     {
         int bytes; /// decrypted bytes, or <= 0
         int error; /// SSL error code when `bytes <= 0`
-        bool outputPending; /// OpenSSL produced data to send (e.g. a key update reply)
+        bool outputPending; /// OpenSSL produced data to send (e.g. a queued key update)
     }
 
     private ReadResult sslRead(scope ubyte[] buffer) @trusted
@@ -1022,8 +1022,42 @@ unittest
     abrupt.close();
 }
 
+// A read sends what OpenSSL has queued, here a key update request. (OpenSSL sends
+// the peer's reply with its next write.)
+unittest
+{
+    if (!haveOpenSsl())
+        return;
+    auto pair = connectPair(trustingOptions());
+    scope (exit)
+        pair.close();
+    assert(pair.clientError is null && pair.serverError is null);
+
+    void transfer(TlsTransport from, TlsTransport to, const(ubyte)[] data)
+    {
+        from.write(data);
+        auto received = new ubyte[data.length];
+        for (size_t got = 0; got < received.length;)
+        {
+            const n = to.read(received[got .. $]);
+            assert(n > 0, "end of stream");
+            got += n;
+        }
+        assert(received == data);
+    }
+
+    pair.server.requestKeyUpdate();
+    transfer(pair.client, pair.server, [1, 2, 3]);
+    assert(pair.server.readsThatSent > 0, "the read didn't send the key update request");
+    // New keys in both directions: server to client since the request, client to server
+    // since the reply, which goes with the client's next write
+    transfer(pair.server, pair.client, [4, 5, 6, 7]);
+    transfer(pair.client, pair.server, [8, 9]);
+}
+
 // One reader and one concurrent writer on each side, with key updates that make
-// reads send data: the case of Connection.cancel during a query
+// reads send data: the case of Connection.cancel during a query. Whether a read or
+// a write sends a key update depends on the timing, so only the data is checked.
 unittest
 {
     if (!haveOpenSsl())
@@ -1092,7 +1126,6 @@ unittest
     serverWriter.join();
     clientWriter.join();
     serverReader.join();
-    assert(pair.client.readsThatSent > 0, "no read had to send a key update reply");
 }
 
 // On Windows, client contexts trust the certificates of the system store
