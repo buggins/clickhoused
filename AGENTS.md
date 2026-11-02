@@ -215,7 +215,7 @@ Don't modify any of these repositories unless the user explicitly asks.
 - **The server sends profile events after every block the client sends.** The inserter drains pending packets after each block (`Transport.dataAvailable`); otherwise both sides can block on full socket buffers.
 - **After an `Exception` during an insert,** the server discards client data until the empty end block arrives. The client must send that block if it hasn't already, or the connection stays desynchronized.
 - **Native inserts get no Progress packets**, so `Inserter.finish` reports `writtenRows = rowsSent`. Inline `INSERT ... VALUES (...)` and `INSERT ... SELECT` do report progress, and run fine through `exec()`.
-- **A `TableColumns` packet means the server is waiting for data** (an INSERT, or the `input()` function). `query()`/`exec()` end such an insert with no rows and throw a `ClientException`.
+- **A `TableColumns` packet means the server is waiting for data** (an INSERT, or the `input()` function). `query()`/`exec()` end such an insert with no rows and throw a `ClientException`. `INSERT ... SELECT ... FROM input('structure')` works through `beginInsert` when the query ends with `FORMAT Native` (without it: "Unknown format"); the header block has `input()`'s columns.
 - **Raise errors where the stream is still intact outside `Connection.guarded`.** `guarded` closes the connection on any non-server exception.
 - **Network compression** (`ConnectionOptions.compression`):
   - The Query packet carries a compression flag. The client also sends `network_compression_method`, so the server compresses its replies with the same method.

@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here. The project follows [Semantic Versioning](https://semver.org); until 1.0, minor versions may change the API.
 
+## Unreleased
+
+### Changed
+- API cleanup ahead of 0.9 (#55): `quoteIdentifier` moved to `clickhoused.literal` (next to `formatLiteral`), `appendValue` and `appendVariant` to `clickhoused.mapping` (next to `readValue`). Code that imports `clickhoused` sees no change, and `clickhoused.insert` still re-exports them. `Inserter.newBlock` is no longer public, and `dynamicTypeOf` is internal.
+
+### Added
+- Documented `INSERT ... SELECT ... FROM input('structure') FORMAT Native` through `Connection.beginInsert`, which transforms the rows on the server while inserting them (#55); the query must end with `FORMAT Native`.
+
 ## 0.6.0 — 2026-11-01
 
 Performance (milestone M9): six speed-ups found with a new benchmark suite, without breaking changes (the only API addition is `WideIntColumn.appendWide`). On the benchmark machine a SELECT of typical columns decodes about 4–5 times faster (with LZ4 compression about 6 times), row-by-row inserts and `query!T` about 3 times. Numbers and method: `doc/benchmarks.md`.

@@ -32,12 +32,12 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 module clickhoused.mapping;
 
 import core.time : Duration;
-import std.bigint : BigInt;
+import std.bigint : BigInt, toDecimalString;
 import std.datetime.date : Date, TimeOfDay;
 import std.datetime.systime : SysTime;
 import std.meta : AliasSeq;
-import std.traits : getUDAs, hasUDA, isAssociativeArray, isDynamicArray, isFloatingPoint, isIntegral, isSigned,
-    isSomeString, KeyType, Unqual, ValueType;
+import std.traits : getUDAs, hasUDA, isAssociativeArray, isDynamicArray, isFloatingPoint, isInstanceOf, isIntegral,
+    isSigned, isSomeString, KeyType, Unqual, ValueType;
 import std.typecons : Nullable;
 import std.json : JSONValue;
 import std.uuid : UUID;
@@ -47,7 +47,7 @@ import clickhoused.block : Block;
 import clickhoused.connection : QueryResult, QueryStats;
 import clickhoused.exception : ClientException;
 import clickhoused.types.column : Column;
-import clickhoused.types.decimal : Decimal, decimalAt;
+import clickhoused.types.decimal : appendDecimalTo, Decimal, decimalAt;
 import clickhoused.types.ip : IPv4, IPv4Column, IPv6, IPv6Column;
 import clickhoused.types.wideint : isWideInt, WideIntColumn;
 
@@ -665,6 +665,293 @@ private template fieldColumnName(T, size_t i)
         enum fieldColumnName = __traits(identifier, T.tupleof[i]);
 }
 
+/++
+Appends the value held by `value` as `appendValue` does for its D type: an
+empty `Variant` as NULL, integers, floating-point numbers, `bool`, strings,
+`Date`, `SysTime`, `UUID`, `Duration` and `TimeOfDay`.
+
+Throws: `ClientException` for other held types.
++/
+void appendVariant(Column column, Variant value) @trusted
+{
+    // std.variant is not annotated @safe; peeking at a held value is memory-safe
+    if (!value.hasValue)
+        return column.appendNull();
+    static foreach (V; AliasSeq!(long, int, short, byte, ulong, uint, ushort, ubyte, double, float, bool, string,
+            const(char)[], Date, SysTime, UUID, Duration, TimeOfDay, JSONValue))
+        if (auto p = value.peek!V)
+            return appendValue(column, *p);
+    throw new ClientException("Cannot store a Variant holding " ~ value.type.toString() ~ " in column '"
+            ~ column.name ~ "' (" ~ column.typeName ~ ")");
+}
+
+/// Appends `value` to `column` using the appender for its D type.
+void appendValue(T)(Column column, auto ref T value) @safe
+{
+    import std.conv : to;
+    import std.traits : Unqual;
+
+    alias U = Unqual!T;
+    // Values without a typed Column append go to the Variant alternative that takes them, not to its String
+    static if (!(is(U == typeof(null)) || isInstanceOf!(Nullable, U) || is(U == Variant) || is(U == enum)
+            || is(U == bool) || isIntegral!U || isFloatingPoint!U || isSomeString!U || is(U
+            : const(ubyte)[])
+            || is(U == Date) || is(U == SysTime) || is(U == UUID) || is(U == Duration) || is(U == TimeOfDay)))
+    {
+        import clickhoused.types.dynamic : DynamicColumn;
+        import clickhoused.types.variant : VariantColumn;
+
+        if (auto variant = cast(VariantColumn) column)
+            return variant.appendToAny((Column c) => appendValue(c, value));
+        if (auto dynamic = cast(DynamicColumn) column)
+            return dynamic.appendTyped(dynamicTypeOf(value), (Column c) => appendValue(c, value));
+    }
+    static if (is(U == typeof(null)))
+        column.appendNull();
+    else static if (is(U == Variant))
+        (() @trusted => appendVariant(column, value))(); // copying a Variant is memory-safe
+    else static if (is(U : Nullable!V, V))
+    {
+        if (value.isNull)
+            column.appendNull();
+        else
+            appendValue(column, value.get);
+    }
+    else static if (is(U == enum))
+        column.appendString(value.to!string);
+    else static if (is(U == bool))
+        column.appendBool(value);
+    else static if (isIntegral!U && isSigned!U)
+        column.appendLong(value);
+    else static if (isIntegral!U)
+        column.appendUlong(value);
+    else static if (isFloatingPoint!U)
+        column.appendDouble(value);
+    else static if (isSomeString!U)
+        column.appendString(value.to!string);
+    else static if (is(U : const(ubyte)[]))
+        column.appendBytes(value);
+    else static if (isDynamicArray!U)
+    {
+        import clickhoused.types.array : ArrayColumn;
+
+        import clickhoused.types.map : MapColumn;
+
+        auto array = cast(ArrayColumn) column;
+        if (array is null)
+            if (auto map = cast(MapColumn) column)
+                array = map.entries; // an array of (key, value) tuples fills a Map
+        if (array is null)
+            throw new ClientException("Cannot store an array in column '" ~ column.name ~ "' (" ~ column.typeName
+                    ~ ")");
+        const before = array.elements.length;
+        scope (failure)
+            array.elements.truncate(before); // leave the column as it was
+        foreach (ref element; value)
+            appendValue(array.elements, element);
+        array.endRow();
+    }
+    else static if (is(U == Date))
+        column.appendDate(value);
+    else static if (is(U == SysTime))
+        column.appendSysTime(value);
+    else static if (is(U == UUID))
+        column.appendUUID(value);
+    else static if (is(U == Duration))
+        column.appendDuration(value);
+    else static if (is(U == TimeOfDay))
+        column.appendDuration(value - TimeOfDay(0, 0, 0));
+    else static if (is(U == JSONValue))
+        column.appendString(value.toString()); // JSON text, parsed by the server
+    else static if (isWideInt!U)
+    {
+        if (auto wide = cast(WideIntColumn!U) column)
+            wide.appendWide(value);
+        else
+            column.appendString(value.toString()); // other columns parse the decimal text, with range checks
+    }
+    else static if (is(U == BigInt))
+        column.appendString(value.toDecimalString());
+    else static if (is(U == IPv4))
+    {
+        if (auto typed = cast(IPv4Column) column)
+            typed.appendIPv4(value);
+        else
+            column.appendString(value.toString()); // an IPv6 column stores it IPv4-mapped
+    }
+    else static if (is(U == IPv6))
+    {
+        if (auto typed = cast(IPv6Column) column)
+            typed.appendIPv6(value);
+        else
+            column.appendString(value.toString());
+    }
+    else static if (is(U == Decimal))
+    {
+        if (!appendDecimalTo(column, value))
+            column.appendString(value.toString()); // other numeric columns parse the text
+    }
+    else static if (isAssociativeArray!U)
+    {
+        import clickhoused.types.map : MapColumn;
+
+        auto map = cast(MapColumn) column;
+        if (map is null)
+            throw new ClientException("Cannot store an associative array in column '" ~ column.name ~ "' ("
+                    ~ column.typeName ~ "): it needs a Map column");
+        const before = map.keys.length;
+        scope (failure)
+        {
+            map.keys.truncate(before); // leave the column as it was
+            map.values.truncate(before);
+        }
+        foreach (key, item; value)
+        {
+            appendValue(map.keys, key);
+            appendValue(map.values, item);
+        }
+        map.endRow();
+    }
+    else static if (is(U == struct))
+    {
+        import clickhoused.mapping : IgnoreField, columnNames;
+        import clickhoused.types.tuple : TupleColumn;
+        import std.traits : hasUDA;
+
+        auto tuple = cast(TupleColumn) column;
+        if (tuple is null)
+            throw new ClientException("Cannot store a " ~ U.stringof ~ " in column '" ~ column.name ~ "' ("
+                    ~ column.typeName ~ "): it needs a Tuple column");
+        const positions = tuple.fieldPositions(columnNames!U, U.stringof);
+        const before = tuple.length;
+        scope (failure)
+            tuple.truncate(before); // leave the column as it was
+        size_t k;
+        static foreach (i; 0 .. U.tupleof.length)
+        {
+            static if (!hasUDA!(U.tupleof[i], IgnoreField))
+                appendValue(tuple.elements[positions[k++]], value.tupleof[i]);
+        }
+        tuple.endRow();
+    }
+    else
+        static assert(0, "Cannot insert values of type " ~ T.stringof);
+}
+
+/++
+The type a value of D type `T` gets in a `Dynamic` column when it has no
+typed append (arrays, structs, `Decimal`, ...): `Array(...)` of the element
+type, `Map(K, V)`, a named `Tuple` for a struct, `Decimal(P, S)` with the
+smallest precision that fits the value.
++/
+package(clickhoused) string dynamicTypeOf(T)(auto ref const T value) @safe
+{
+    import std.traits : Unqual;
+
+    alias U = Unqual!T;
+    static if (is(U == Decimal))
+    {
+        import std.algorithm.comparison : max;
+
+        const text = value.unscaled.toString();
+        const digits = text.length - (text[0] == '-' ? 1 : 0);
+        const needed = max(digits, value.scale, 1);
+        const precision = needed <= 9 ? 9 : needed <= 18 ? 18 : needed <= 38 ? 38 : 76;
+        import std.conv : to;
+
+        return "Decimal(" ~ precision.to!string ~ ", " ~ value.scale.to!string ~ ")";
+    }
+    else
+    {
+        enum name = dynamicTypeName!U();
+        static if (name is null)
+            throw new ClientException(
+                    "No ClickHouse type for " ~ T.stringof
+                    ~ " in a Dynamic column; use DynamicColumn.appendTyped");
+        else
+            return name;
+    }
+}
+
+/// ditto, for types whose ClickHouse type doesn't depend on the value; `null` if there is none.
+private string dynamicTypeName(T)() @safe pure
+{
+    import std.traits : hasUDA, KeyType, Unqual, ValueType;
+    import std.typecons : StdTuple = Tuple;
+    import clickhoused.mapping : columnNames, IgnoreField, isTupleValue;
+    import clickhoused.types.geo : GeoPoint;
+
+    alias U = Unqual!T;
+    static if (is(U == enum))
+        return "String"; // stored by member name
+    else static if (is(U == bool))
+        return "Bool";
+    else static if (isIntegral!U)
+        return isSigned!U ? "Int64" : "UInt64";
+    else static if (isFloatingPoint!U)
+        return "Float64";
+    else static if (isSomeString!U || is(U : const(ubyte)[]))
+        return "String";
+    else static if (is(U : Nullable!V, V))
+        return wrap("Nullable(", dynamicTypeName!V(), ")");
+    else static if (is(U == Date))
+        return "Date32";
+    else static if (is(U == SysTime))
+        return "DateTime64(9)";
+    else static if (is(U == UUID) || is(U == IPv4) || is(U == IPv6))
+        return U.stringof;
+    else static if (isWideInt!U)
+        return U.typeName;
+    else static if (is(U == BigInt))
+        return "Int256";
+    else static if (is(U == GeoPoint))
+        return "Point";
+    else static if (is(U == JSONValue))
+        return "JSON";
+    else static if (isDynamicArray!U)
+        return wrap("Array(", dynamicTypeName!(typeof(U.init[0]))(), ")");
+    else static if (isAssociativeArray!U)
+    {
+        const key = dynamicTypeName!(KeyType!U)();
+        return key is null ? null : wrap("Map(" ~ key ~ ", ", dynamicTypeName!(ValueType!U)(), ")");
+    }
+    else static if (isInstanceOf!(StdTuple, U))
+    {
+        string s = "Tuple(";
+        static foreach (i, F; U.Types)
+        {
+            if (dynamicTypeName!F() is null)
+                return null;
+            s ~= (i ? ", " : "") ~ (U.fieldNames[i].length ? "`" ~ U.fieldNames[i] ~ "` " : "") ~ dynamicTypeName!F();
+        }
+        return s ~ ")";
+    }
+    else static if (isTupleValue!U)
+    {
+        string s = "Tuple(";
+        size_t k;
+        static foreach (i; 0 .. U.tupleof.length)
+        {
+            static if (!hasUDA!(U.tupleof[i], IgnoreField))
+            {
+                if (dynamicTypeName!(typeof(U.tupleof[i]))() is null)
+                    return null;
+                s ~= (k ? ", " : "") ~ "`" ~ columnNames!U[k] ~ "` " ~ dynamicTypeName!(typeof(U.tupleof[i]))();
+                k++;
+            }
+        }
+        return s ~ ")";
+    }
+    else
+        return null;
+}
+
+/// `open ~ inner ~ close`, or `null` if `inner` is.
+private string wrap(string open, string inner, string close) @safe pure
+{
+    return inner is null ? null : open ~ inner ~ close;
+}
+
 /// `target = source`.
 private void setField(T)(ref T target, T source)
 {
@@ -753,7 +1040,6 @@ private string columnList(Block block) @safe
 @safe unittest
 {
     import std.exception : assertThrown;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.array : ArrayColumn;
     import clickhoused.types.factory : createColumn;
 
@@ -786,7 +1072,6 @@ private string columnList(Block block) @safe
 @safe unittest
 {
     import std.exception : assertThrown;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.factory : createColumn;
     import clickhoused.types.wideint : Int128, Int256, UInt128;
 
@@ -819,7 +1104,6 @@ private string columnList(Block block) @safe
 @safe unittest
 {
     import std.exception : assertThrown;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.decimal : Decimal;
     import clickhoused.types.factory : createColumn;
 
@@ -853,7 +1137,6 @@ private string columnList(Block block) @safe
 @safe unittest
 {
     import std.exception : assertThrown;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.factory : createColumn;
 
     auto v4 = createColumn("a", "IPv4");
@@ -878,7 +1161,6 @@ private string columnList(Block block) @safe
 {
     import std.exception : assertThrown;
     import std.typecons : Tuple, tuple;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.factory : createColumn;
     import clickhoused.types.tuple : TupleColumn;
 
@@ -924,7 +1206,6 @@ private string columnList(Block block) @safe
 {
     import std.exception : assertThrown;
     import std.typecons : Tuple, tuple;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.factory : createColumn;
     import clickhoused.types.map : MapColumn;
 
@@ -953,7 +1234,6 @@ private string columnList(Block block) @safe
 {
     import core.time : hours, minutes, msecs, seconds;
     import std.exception : assertThrown;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.factory : createColumn;
 
     // Time and Time64: Duration for any value, TimeOfDay from 00:00:00 to 23:59:59
@@ -993,7 +1273,6 @@ private string columnList(Block block) @safe
 @system unittest
 {
     import std.exception : assertThrown;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.factory : createColumn;
 
     // std.variant.Variant: the held value of any column, NULL as an empty Variant
@@ -1021,7 +1300,6 @@ private string columnList(Block block) @safe
 @safe unittest
 {
     import std.exception : assertThrown;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.decimal : Decimal;
     import clickhoused.types.factory : createColumn;
     import clickhoused.types.ip : IPv4;
@@ -1053,7 +1331,6 @@ private string columnList(Block block) @safe
 {
     import std.exception : assertThrown;
     import std.typecons : tuple;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.decimal : Decimal;
     import clickhoused.types.dynamic : DynamicColumn;
     import clickhoused.types.factory : createColumn;
@@ -1094,7 +1371,6 @@ private string columnList(Block block) @safe
 {
     import std.exception : assertThrown;
     import std.json : parseJSON;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.dynamic : DynamicColumn;
     import clickhoused.types.factory : createColumn;
     import clickhoused.types.variant : VariantColumn;
@@ -1125,7 +1401,6 @@ private string columnList(Block block) @safe
 @safe unittest
 {
     import std.datetime.timezone : UTC;
-    import clickhoused.insert : appendValue;
     import clickhoused.types.factory : createColumn;
 
     // Fields read through typed columns (exact matches) and through readValue (conversions) give the same values
@@ -1202,4 +1477,15 @@ private string columnList(Block block) @safe
     assert(fast[0].column !is null && fast[4].column !is null && fast[5].wide !is null);
     bindFast!Row(fast, bindColumns!Row(converting));
     assert(fast[0].column is null && fast[5].narrow !is null && fast[8].column is null);
+}
+
+@safe unittest
+{
+    // Moved here and to clickhoused.literal in 0.9: still importable from clickhoused.insert
+    import clickhoused.insert : appendValue, appendVariant, quoteIdentifier;
+    import clickhoused.types.factory : createColumn;
+
+    auto c = createColumn("c", "UInt8");
+    appendValue(c, 5);
+    assert(c.getLong(0) == 5 && quoteIdentifier("a") == "`a`");
 }
