@@ -270,9 +270,20 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
     }
 }
 
-/// The decimal in `row` if `column` is any `DecimalColumn`; returns false otherwise.
+/++
+The decimal in `row` if `column` is any `DecimalColumn`, also inside
+`Nullable` and `LowCardinality` (whose values are a column of the inner type,
+row for row); returns false otherwise. The caller checks for NULL first.
++/
 package(clickhoused) bool decimalAt(const Column column, size_t row, out Decimal value) @safe
 {
+    import clickhoused.types.lowcardinality : LowCardinalityColumn;
+    import clickhoused.types.misc : NullableColumn;
+
+    if (auto n = cast(const NullableColumn) column)
+        return decimalAt(n.nested, row, value);
+    if (auto lc = cast(const LowCardinalityColumn) column)
+        return decimalAt(lc.values, row, value);
     static foreach (T; AliasSeq!(int, long, Int128, Int256))
         if (auto c = cast(const DecimalColumn!T) column)
             {

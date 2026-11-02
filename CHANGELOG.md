@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The project follows [Se
 - API cleanup ahead of 0.9 (#55): `quoteIdentifier` moved to `clickhoused.literal` (next to `formatLiteral`), `appendValue` and `appendVariant` to `clickhoused.mapping` (next to `readValue`). Code that imports `clickhoused` sees no change, and `clickhoused.insert` still re-exports them. `Inserter.newBlock` is no longer public, and `dynamicTypeOf` is internal.
 
 ### Fixed
+- `readValue!Decimal` (and struct mapping, `query!T`) kept the scale of `Decimal(P, S)` columns but not inside `Nullable` or `LowCardinality`: `12.3400` in a `Nullable(Decimal(30, 4))` column read as `12.34` (#61).
 - In fiber mode on Windows, `Transport.dataAvailable` (used by `Inserter` to process server packets between blocks) could lose received data, breaking the connection: an eventcore bug in its Windows driver, worked around in dbwire (#59).
 
 ### Added
