@@ -27,12 +27,14 @@ import clickhoused.insert : Inserter;
 import clickhoused.literal : quoteIdentifier;
 import clickhoused.mapping : RowRange;
 import clickhoused.io.backend : IoBackend, backendFor;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, readString, readUVarInt, writeString, writeUVarInt;
 import clickhoused.io.tls : TlsContext, TlsTransport;
 import clickhoused.io.transport : Transport;
 import clickhoused.protocol.codes : ClientPacket, Revision, ServerPacket;
 import clickhoused.protocol.packets;
-import clickhoused.settings : ConnectionOptions, HostPort, HostSelection;
+import clickhoused.settings : ConnectionOptions, HostPort;
+import dbwire.client.hosts : connectFirst, orderHosts;
+import dbwire.client.pool : Poolable;
 
 /// Statistics of a finished (or partially read) query.
 struct QueryStats
@@ -61,7 +63,7 @@ $(UL
 The connection is not thread-safe. Call `close` when done; the garbage
 collector does not close it.
 +/
-final class Connection
+final class Connection : Poolable
 {
     package enum State
     {
@@ -539,34 +541,22 @@ final class Connection
 
         // Try the hosts in turn. Network and protocol failures move on to the next
         // host; a login rejected by the server does not.
-        string failures;
-        foreach (endpoint; candidateHosts())
+        void tryHost(HostPort endpoint) @safe
         {
-            try
-            {
-                connectTo(endpoint, tlsContext);
-                return;
-            }
-            catch (ConnectionException e)
-                failures ~= (failures.length ? "; " : "") ~ endpoint.toString() ~ ": " ~ e.msg;
-            catch (ProtocolException e)
-                failures ~= (failures.length ? "; " : "") ~ endpoint.toString() ~ ": " ~ e.msg;
+            connectTo(endpoint, tlsContext);
         }
-        throw new ConnectionException("Cannot connect to ClickHouse: " ~ failures);
+
+        connectFirst(candidateHosts(), &tryHost, "ClickHouse");
     }
 
     private HostPort[] candidateHosts() const @safe
     {
-        import std.random : randomShuffle;
-
         auto hosts = options.hosts.length ? options.hosts.dup : [
             HostPort(options.host, options.port)
         ];
         foreach (ref h; hosts)
             h.port = options.effectivePort(h.port);
-        if (options.hostSelection == HostSelection.random)
-            randomShuffle(hosts);
-        return hosts;
+        return orderHosts(hosts, options.hostSelection);
     }
 
     private void connectTo(HostPort endpoint, TlsContext tlsContext) @safe

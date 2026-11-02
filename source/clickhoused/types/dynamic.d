@@ -28,7 +28,7 @@ import std.uuid : UUID;
 import std.variant : Variant;
 
 import clickhoused.exception : ClientException, ProtocolException;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, readString, readUVarInt, writeString, writeUVarInt;
 import clickhoused.types.column : Column, readChunkRows;
 import clickhoused.types.string : StringColumn;
 import clickhoused.types.variant : VariantColumn;

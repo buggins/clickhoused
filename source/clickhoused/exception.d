@@ -1,8 +1,9 @@
 /++
 Exceptions thrown by clickhoused.
 
-All library exceptions derive from `ClickHouseException`, so the library's
-errors can be caught with a single `catch`. The subclasses tell apart:
+All library exceptions derive from `ClickHouseException` (an alias of
+`dbwire.exception.DbException`), so the library's errors can be caught with a
+single `catch`. The subclasses tell apart:
 $(UL
     $(LI `ServerException`: the server reported an error. The connection stays usable.)
     $(LI `ConnectionException`: network failure or timeout. The connection is closed.)
@@ -15,36 +16,14 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.exception;
 
-import std.exception : basicExceptionCtors;
+public import dbwire.exception : ClientException, ConnectionException, DbException, ProtocolException;
 
-/// Base class of all exceptions thrown by clickhoused.
-class ClickHouseException : Exception
-{
-    ///
-    mixin basicExceptionCtors;
-}
-
-/// Invalid use of the library, invalid options, or an unsupported feature.
-class ClientException : ClickHouseException
-{
-    ///
-    mixin basicExceptionCtors;
-}
-
-/// Network failure or timeout. The connection is closed and cannot be reused.
-class ConnectionException : ClickHouseException
-{
-    ///
-    mixin basicExceptionCtors;
-}
-
-/// The server sent malformed or unexpected data. The connection is closed and
-/// cannot be reused.
-class ProtocolException : ClickHouseException
-{
-    ///
-    mixin basicExceptionCtors;
-}
+/++
+Base class of all exceptions thrown by clickhoused: an alias of
+`dbwire.exception.DbException`, the base of the dbwire exceptions that
+clickhoused's I/O layer throws.
++/
+alias ClickHouseException = DbException;
 
 /++
 An error reported by the ClickHouse server, for example a syntax error or an
@@ -55,7 +34,7 @@ errors the server detects while still receiving the query, such as an unknown
 setting name or an invalid setting value: the server then closes the
 connection, and the next call fails with `ConnectionException`.
 +/
-class ServerException : ClickHouseException
+class ServerException : DbException
 {
     /// ClickHouse error code, e.g. 62 (`SYNTAX_ERROR`) or 60 (`UNKNOWN_TABLE`).
     int code;

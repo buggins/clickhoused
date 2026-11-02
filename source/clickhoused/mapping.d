@@ -852,14 +852,16 @@ package(clickhoused) string dynamicTypeOf(T)(auto ref const T value) @safe
     static if (is(U == Decimal))
     {
         import std.algorithm.comparison : max;
-
-        const text = value.unscaled.toString();
-        const digits = text.length - (text[0] == '-' ? 1 : 0);
-        const needed = max(digits, value.scale, 1);
-        const precision = needed <= 9 ? 9 : needed <= 18 ? 18 : needed <= 38 ? 38 : 76;
         import std.conv : to;
+        import clickhoused.types.decimal : maxDecimalPrecision;
 
-        return "Decimal(" ~ precision.to!string ~ ", " ~ value.scale.to!string ~ ")";
+        // A negative scale (a power of ten) is exact at scale 0; ClickHouse scales are 0 to 76
+        const v = value.scale < 0 ? value.rescaled(0) : value;
+        if (v.scale > maxDecimalPrecision)
+            throw new ClientException("Decimal scale " ~ v.scale.to!string ~ " is above ClickHouse's limit of 76");
+        const needed = max(v.precision, cast(uint) v.scale, 1);
+        const precision = needed <= 9 ? 9 : needed <= 18 ? 18 : needed <= 38 ? 38 : 76;
+        return "Decimal(" ~ precision.to!string ~ ", " ~ v.scale.to!string ~ ")";
     }
     else
     {
@@ -1098,6 +1100,19 @@ private string columnList(Block block) @safe
     appendValue(nullable, Nullable!Int256.init);
     assert(readValue!(Nullable!Int256)(nullable, 0).get == Int256.max);
     assert(readValue!(Nullable!Int256)(nullable, 1).isNull);
+}
+
+// Decimal type names for Dynamic columns: negative scales become 0, scales above 76 are refused
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.types.wideint : Int256;
+
+    assert(dynamicTypeOf(Decimal.fromString("-12.345")) == "Decimal(9, 3)");
+    assert(dynamicTypeOf(Decimal(Int256(12), -3)) == "Decimal(9, 0)"); // 12000
+    assert(dynamicTypeOf(Decimal(Int256(1), -20)) == "Decimal(38, 0)");
+    assert(dynamicTypeOf(Decimal(Int256(1), 76)) == "Decimal(76, 76)");
+    assertThrown!ClientException(dynamicTypeOf(Decimal(Int256(1), 77)));
 }
 
 // Decimal values to and from columns

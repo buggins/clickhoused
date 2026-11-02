@@ -18,39 +18,15 @@ import clickhoused.exception : ClientException;
 import clickhoused.io.backend : IoMode;
 import clickhoused.io.tls : TlsOptions;
 import clickhoused.io.transport : TransportFactory;
+import dbwire.client.dsn : Dsn, parseEnumValue, parseFlag, parseSeconds;
+
+/// Moved to `dbwire.client.hosts` (package dbwire) in 0.9; re-exported here.
+public import dbwire.client.hosts : HostPort, HostSelection;
 
 /// Default native protocol port without TLS.
 enum ushort defaultPort = 9000;
 /// Default native protocol port with TLS (`ConnectionOptions.secure`).
 enum ushort defaultSecurePort = 9440;
-
-/// A server address.
-struct HostPort
-{
-    /// Host name or IP address.
-    string host;
-    /// Native protocol port; 0 means the default (9000, or 9440 with TLS).
-    ushort port;
-
-    /// `host:port`, with IPv6 addresses in brackets; just the host when the port is 0 (default).
-    string toString() const @safe pure
-    {
-        import std.algorithm.searching : canFind;
-        import std.conv : to;
-
-        const name = host.canFind(':') ? "[" ~ host ~ "]" : host;
-        return port ? name ~ ":" ~ port.to!string : name;
-    }
-}
-
-/// How `ConnectionOptions.hosts` are tried when connecting.
-enum HostSelection
-{
-    /// In the given order: the first host is the primary, the others are fallbacks.
-    inOrder,
-    /// In random order, spreading connections over the hosts.
-    random,
-}
 
 /// Options for opening a `clickhoused.connection.Connection`.
 struct ConnectionOptions
@@ -171,61 +147,18 @@ struct ConnectionOptions
     +/
     static ConnectionOptions fromDsn(string dsn) @safe
     {
-        import std.algorithm.searching : findSplit, findSplitBefore, startsWith;
-        import std.array : split;
-        import std.string : indexOf, lastIndexOf;
-
-        enum scheme = "clickhouse://";
-        if (!dsn.startsWith(scheme))
-            throw new ClientException("A connection string must start with '" ~ scheme ~ "'");
-        string rest = dsn[scheme.length .. $];
-
-        string query;
-        if (auto q = rest.findSplit("?"))
-        {
-            rest = q[0];
-            query = q[2];
-        }
-        string path;
-        const slash = rest.indexOf('/');
-        if (slash >= 0)
-        {
-            path = rest[slash + 1 .. $];
-            rest = rest[0 .. slash];
-        }
-
+        const parsed = Dsn.parse(dsn, "clickhouse");
         string[string] params;
-        const at = rest.lastIndexOf('@');
-        if (at >= 0)
-        {
-            const userInfo = rest[0 .. at];
-            rest = rest[at + 1 .. $];
-            if (auto up = userInfo.findSplit(":"))
-            {
-                params["user"] = decode(up[0], dsn);
-                params["password"] = decode(up[2], dsn);
-            }
-            else
-                params["user"] = decode(userInfo, dsn);
-        }
-        if (path.length)
-            params["database"] = decode(path, dsn);
-        foreach (pair; query.split("&"))
-        {
-            if (pair.length == 0)
-                continue;
-            if (auto kv = pair.findSplit("="))
-                params[decode(kv[0], dsn)] = decode(kv[2], dsn);
-            else
-                params[decode(pair, dsn)] = "true";
-        }
-
+        foreach (key, value; parsed.params)
+            params[key] = value;
+        if (parsed.hasUser)
+            params["user"] = parsed.user;
+        if (parsed.hasPassword)
+            params["password"] = parsed.password;
+        if (parsed.path.length)
+            params["database"] = parsed.path;
         auto options = fromParams(params);
-        if (rest.length == 0)
-            throw new ClientException("The connection string has no host");
-        options.hosts = null;
-        foreach (hostPort; rest.split(","))
-            options.hosts ~= parseHostPort(hostPort, dsn);
+        options.hosts = parsed.hosts.dup;
         if (options.hosts.length == 1)
         {
             options.host = options.hosts[0].host;
@@ -330,11 +263,11 @@ struct ConnectionOptions
                 options.receiveTimeout = parseSeconds(key, value);
                 break;
             case "io":
-                options.ioMode = value == "auto" ? IoMode.auto_ : parseEnum!IoMode(key, value);
+                options.ioMode = value == "auto" ? IoMode.auto_ : parseEnumValue!IoMode(key, value);
                 break;
             case "host_selection":
                 options.hostSelection = value == "in_order" ? HostSelection.inOrder
-                    : parseEnum!HostSelection(key, value);
+                    : parseEnumValue!HostSelection(key, value);
                 break;
             case "client_name":
                 options.clientName = value;
@@ -427,97 +360,6 @@ struct ConnectionOptions
         "clickhouse://[::1", "clickhouse://h?x=%zz",
     ])
         assertThrown!ClientException(ConnectionOptions.fromDsn(bad), bad);
-}
-
-private HostPort parseHostPort(string text, string dsn) @safe
-{
-    import std.algorithm.searching : findSplit, startsWith;
-    import std.conv : ConvException, to;
-    import std.string : indexOf, lastIndexOf;
-
-    string host = text;
-    string port;
-    if (text.startsWith("["))
-    {
-        const close = text.indexOf(']');
-        if (close < 0)
-            throw new ClientException("Invalid host '" ~ text ~ "' in '" ~ dsn ~ "'");
-        host = text[1 .. close];
-        const after = text[close + 1 .. $];
-        if (after.length)
-        {
-            if (!after.startsWith(":"))
-                throw new ClientException("Invalid host '" ~ text ~ "' in '" ~ dsn ~ "'");
-            port = after[1 .. $];
-        }
-    }
-    else if (auto hp = text.findSplit(":"))
-    {
-        host = hp[0];
-        port = hp[2];
-    }
-    if (host.length == 0)
-        throw new ClientException("Empty host in '" ~ dsn ~ "'");
-    auto result = HostPort(host);
-    if (port.length)
-    {
-        try
-            result.port = port.to!ushort;
-        catch (ConvException)
-            throw new ClientException("Invalid port '" ~ port ~ "' in '" ~ dsn ~ "'");
-    }
-    return result;
-}
-
-private string decode(string text, string dsn) @safe
-{
-    import std.uri : URIException, decodeComponent;
-
-    try
-        return decodeComponent(text);
-    catch (URIException)
-        throw new ClientException("Invalid percent-encoding in '" ~ dsn ~ "'");
-}
-
-private Duration parseSeconds(string key, string value) @safe
-{
-    import core.time : dur;
-    import std.conv : ConvException, to;
-
-    double secondsValue;
-    try
-        secondsValue = value.to!double;
-    catch (ConvException)
-        throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "' (seconds expected)");
-    if (!(secondsValue >= 0) || secondsValue > 1e9)
-        throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "' (seconds expected)");
-    return dur!"hnsecs"(cast(long)(secondsValue * 10_000_000));
-}
-
-/// Parses `true`/`false`/`1`/`0`.
-private bool parseFlag(string key, string value) @safe
-{
-    switch (value)
-    {
-    case "true":
-    case "1":
-        return true;
-    case "false":
-    case "0":
-        return false;
-    default:
-        throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "' (true or false expected)");
-    }
-}
-
-private E parseEnum(E)(string key, string value) @safe
-{
-    import std.conv : ConvException, to;
-
-    try
-        return value.to!E;
-    catch (ConvException)
-        throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "'");
 }
 
 ///

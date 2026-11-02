@@ -7,7 +7,7 @@
 
 A native [ClickHouse](https://clickhouse.com) client library for the [D programming language](https://dlang.org).
 
-- **Pure D.** It implements the ClickHouse native TCP protocol (port 9000) directly. LZ4 compression is built in; nothing else is needed.
+- **Pure D.** It implements the ClickHouse native TCP protocol (port 9000) directly. LZ4 compression is built in; nothing else is needed. Its only dependency, [dbwire](https://github.com/buggins/dbwire), is pure D too: the I/O, TLS and pool code shared with other native database connectors.
 - **TLS** (port 9440, e.g. ClickHouse Cloud) through the system's OpenSSL, loaded only when a secure connection is made.
 - **Threads and fibers.** It works in ordinary threads (Phobos sockets) and in [vibe.d](https://vibed.org) tasks (vibe-core sockets), and chooses automatically. vibe-core is used only if your project depends on it.
 - **Structs or columns.** Map query results to D structs, or process whole columns as D arrays.

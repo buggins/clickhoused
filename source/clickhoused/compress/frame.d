@@ -24,7 +24,8 @@ import core.time : Duration;
 import clickhoused.compress.cityhash : UInt128, cityHash128;
 import clickhoused.compress.lz4 : lz4Compress, lz4Decompress;
 import clickhoused.exception : ClientException, ProtocolException;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter, fromLittleEndian, toLittleEndian;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, fromLittleEndian, readString,
+    toLittleEndian, writeString;
 import clickhoused.io.transport : Transport;
 
 version (ClickHousedZstd) import clickhoused.compress.zstd : zstdCompress, zstdDecompress;

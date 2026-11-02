@@ -10,7 +10,7 @@ import std.conv : ConvException, to;
 import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
-import clickhoused.io.buffer : BufferedReader, BufferedWriter, StringArena;
+import clickhoused.io.buffer : BufferedReader, BufferedWriter, StringArena, readString, writeString;
 import clickhoused.types.column;
 
 /++
