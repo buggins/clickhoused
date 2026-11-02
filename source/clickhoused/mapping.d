@@ -1102,6 +1102,24 @@ private string columnList(Block block) @safe
     assert(readValue!(Nullable!Int256)(nullable, 1).isNull);
 }
 
+// Decimals keep their scale inside Nullable and LowCardinality (#61)
+@safe unittest
+{
+    import clickhoused.types.factory : createColumn;
+
+    foreach (type; [
+        "Nullable(Decimal(30, 4))", "LowCardinality(Decimal(9, 4))",
+        "LowCardinality(Nullable(Decimal(18, 4)))"
+    ])
+    {
+        auto c = createColumn("d", type);
+        appendValue(c, Decimal.fromString("12.34"));
+        appendValue(c, Decimal.fromString("-0.5"));
+        assert(readValue!Decimal(c, 0).toFixedString() == "12.3400", type);
+        assert(readValue!Decimal(c, 1).toFixedString() == "-0.5000", type);
+    }
+}
+
 // Decimal type names for Dynamic columns: negative scales become 0, scales above 76 are refused
 @safe unittest
 {
