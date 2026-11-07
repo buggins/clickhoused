@@ -53,9 +53,9 @@ clickhoused must remain pure BSL-1.0 code written for this project.
 
 ## dbwire
 
-clickhoused builds on **dbwire** (`../dbwire`, https://github.com/buggins/dbwire, dub `dbwire:types`, `:io`, `:tls`, `:client`, `~>0.1`): the parts that are not ClickHouse-specific, shared with the planned SQL Server and Oracle connectors. Moved there in 0.9 (#59): the I/O layer, `BufferedReader`/`BufferedWriter`, TLS and the OpenSSL loader, `Int128`…`UInt256`, `Decimal`, `resolveTimeZone`, the base exceptions, `HostPort`/`HostSelection`/DSN parsing/failover (`connectFirst`), and the pool logic (`PoolCore`).
+clickhoused builds on **dbwire** (`../dbwire`, https://github.com/buggins/dbwire, dub `dbwire:types`, `:io`, `:tls`, `:client`, `~>0.8.0`): the parts that are not ClickHouse-specific, shared with the planned SQL Server and Oracle connectors. Moved there in 0.9 (#59): the I/O layer, `BufferedReader`/`BufferedWriter`, TLS and the OpenSSL loader, `Int128`…`UInt256`, `Decimal`, `resolveTimeZone`, the base exceptions, `HostPort`/`HostSelection`/DSN parsing/failover (`connectFirst`), and the pool logic (`PoolCore`).
 - Changes to moved code go to dbwire: an issue and PR there (it has its own AGENTS.md and the same workflow), a dbwire release, then the version bump here.
-- To build clickhoused against a local dbwire checkout: `dub add-local ../dbwire <version>` (the version the constraint expects, e.g. `0.1.1`), and `dub remove-local ../dbwire` afterwards. Never commit a `path` dependency.
+- To build clickhoused against a local dbwire checkout: `dub add-local ../dbwire <version>` (the version the constraint expects, e.g. `0.8.0`), and `dub remove-local ../dbwire` afterwards. Never commit a `path` dependency.
 - The old clickhoused module paths re-export the moved symbols through 0.9.x (whether 1.0 keeps them is open).
 - Hot `BufferedReader`/`BufferedWriter` methods are templates in dbwire so they inline into clickhoused (LDC doesn't inline ordinary functions across separately compiled packages); keep it that way when adding hot paths.
 - `BufferedReader`/`BufferedWriter` members must not take the names of clickhoused's protocol functions (a member hides a UFCS function).
