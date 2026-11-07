@@ -4,8 +4,12 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+## 0.9.0 — 2026-11-07
+
+The first 0.9.x release candidate before 1.0: the API may still change in 0.9.x, and 1.0 follows once it has settled. clickhoused now builds on [dbwire](https://github.com/buggins/dbwire) 0.8, the pure-D package it shares with postgresql-native, oracle-native and mssql-native; the old module paths keep working, but two changes are breaking (`ClickHouseException` and `Decimal.scale`, below). Still no C dependencies at build time.
+
 ### Changed
-- **clickhoused now builds on [dbwire](https://github.com/buggins/dbwire)** (#59), a pure-D package (same author and license) with the parts that are not ClickHouse-specific, shared with the planned SQL Server and Oracle connectors. Dependencies: `dbwire:types`, `dbwire:io`, `dbwire:tls`, `dbwire:client` 0.8 (`~>0.8.0`, #63), the same as postgresql-native 0.5; still no C dependencies, and vibe-core stays optional. Decoding and encoding run as fast as before (benchmarks compared with alternating runs).
+- **clickhoused now builds on [dbwire](https://github.com/buggins/dbwire)** (#59), a pure-D package (same author and license) with the parts that are not ClickHouse-specific, shared with the SQL Server, Oracle and PostgreSQL connectors (mssql-native, oracle-native, postgresql-native). Dependencies: `dbwire:types`, `dbwire:io`, `dbwire:tls`, `dbwire:client` 0.8 (`~>0.8.0`, #63), the same as postgresql-native 0.5; still no C dependencies, and vibe-core stays optional. Decoding and encoding run as fast as before (benchmarks compared with alternating runs).
   - Moved to dbwire: the I/O layer (`clickhoused.io.transport`, `backend`, `phobos`, `vibecore`, `mock`, `openssl`, `tls` → `dbwire.io.*`, `dbwire.tls.*`), `BufferedReader`/`BufferedWriter` (`dbwire.io.buffer`; the ClickHouse encodings `readUVarInt`, `readString`, `readBytes`, `writeUVarInt`, `writeString` stay in `clickhoused.io.buffer` as free functions with the same call syntax), `Int128`…`UInt256` and `Decimal` (`dbwire.types.*`; the column classes stay), `resolveTimeZone`, `HostPort`/`HostSelection`, `PoolOptions`, DSN parsing, the failover loop and the pool logic (`dbwire.client.*`). The old modules re-export the moved symbols, so existing imports keep working through 0.9.x; `import clickhoused;` gives the same names as before.
   - `ConnectionPool` and `PooledConnection` keep their API, now over `dbwire.client.pool.PoolCore`; `Connection` implements `dbwire.client.pool.Poolable`.
   - **Breaking:** `ClickHouseException` is now an alias of `dbwire.exception.DbException`, the base of `ClientException`, `ConnectionException`, `ProtocolException` (now dbwire's) and `ServerException`; `catch (ClickHouseException)` still catches all of them.
@@ -19,6 +23,7 @@ All notable changes to this project are documented here. The project follows [Se
 - In fiber mode on Windows, `Transport.dataAvailable` (used by `Inserter` to process server packets between blocks) could lose received data, breaking the connection: an eventcore bug in its Windows driver, worked around in dbwire (#59).
 
 ### Added
+- Benchmarks: a server suite (#53), `dub run :bench -b release -- --suite server`, with SELECTs, INSERTs and round trips against a real server, compared with `clickhouse-client` (`bench/server-reference.sh`); results in `doc/benchmarks.md`.
 - Documented `INSERT ... SELECT ... FROM input('structure') FORMAT Native` through `Connection.beginInsert`, which transforms the rows on the server while inserting them (#55); the query must end with `FORMAT Native`.
 
 ## 0.6.0 — 2026-11-01
