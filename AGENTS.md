@@ -53,9 +53,9 @@ clickhoused must remain pure BSL-1.0 code written for this project.
 
 ## dbwire
 
-clickhoused builds on **dbwire** (`../dbwire`, https://github.com/buggins/dbwire, dub `dbwire:types`, `:io`, `:tls`, `:client`, `~>0.8.0`): the parts that are not ClickHouse-specific, shared with the planned SQL Server and Oracle connectors. Moved there in 0.9 (#59): the I/O layer, `BufferedReader`/`BufferedWriter`, TLS and the OpenSSL loader, `Int128`…`UInt256`, `Decimal`, `resolveTimeZone`, the base exceptions, `HostPort`/`HostSelection`/DSN parsing/failover (`connectFirst`), and the pool logic (`PoolCore`).
+clickhoused builds on **dbwire** (`../dbwire`, https://github.com/buggins/dbwire, dub `dbwire:types`, `:io`, `:tls`, `:client`, `~>0.9.0`): the parts that are not ClickHouse-specific, shared with the planned SQL Server and Oracle connectors. Moved there in 0.9 (#59): the I/O layer, `BufferedReader`/`BufferedWriter`, TLS and the OpenSSL loader, `Int128`…`UInt256`, `Decimal`, `resolveTimeZone`, the base exceptions, `HostPort`/`HostSelection`/DSN parsing/failover (`connectFirst`), and the pool logic (`PoolCore`).
 - Changes to moved code go to dbwire: an issue and PR there (it has its own AGENTS.md and the same workflow), a dbwire release, then the version bump here.
-- To build clickhoused against a local dbwire checkout: `dub add-local ../dbwire <version>` (the version the constraint expects, e.g. `0.8.0`), and `dub remove-local ../dbwire` afterwards. Never commit a `path` dependency.
+- To build clickhoused against a local dbwire checkout: `dub add-local ../dbwire <version>` (the version the constraint expects, e.g. `0.9.0`), and `dub remove-local ../dbwire` afterwards. Never commit a `path` dependency.
 - The old clickhoused module paths re-export the moved symbols through 0.9.x (whether 1.0 keeps them is open).
 - Hot `BufferedReader`/`BufferedWriter` methods are templates in dbwire so they inline into clickhoused (LDC doesn't inline ordinary functions across separately compiled packages); keep it that way when adding hot paths.
 - `BufferedReader`/`BufferedWriter` members must not take the names of clickhoused's protocol functions (a member hides a UFCS function).
@@ -350,3 +350,51 @@ These are proposed; refine them when code lands.
   - M7: hibernated dialect (hibernated PR #99);
   - M8: TLS (done, 0.2.0), composite and extended types (#1–#7 done, 0.3.0; #8 split into #19–#22: #19–#21 in 0.4.0, #22 in 0.5.0) and production features;
   - M9: Variant/Dynamic/JSON (#9 split into #29–#31, done, 0.5.0); benchmarks and a first performance pass (PLAN.md §15; done, 0.6.0); server benchmarks and the move to dbwire (done, 0.9.0); release candidates 0.9.x, API freeze → 1.0.
+
+## D idioms and review lessons
+
+Learned from the review of the MySQL 8 work in mysql-native (mysql-d/mysql-native#288, 2026-11). All of these work on the minimum frontend 2.097; checked with LDC 1.27.1.
+
+- **`BigInt` and bytes: never go through hex or decimal strings.**
+  - Bytes to `BigInt`: `BigInt(false, bytes)` takes any finite range of unsigned integers, most significant first.
+  - `BigInt` to words or bytes: `value.getDigit!uint(i)` or `getDigit!ulong(i)` for `i` below `uintLength` or `ulongLength`, least significant first. dbwire's `WideInt.fromBigInt` does this.
+  - Modular exponentiation: `std.bigint.powmod`.
+  - `format("%x", bigint)` groups digits with `_` until Phobos 2.114 (dlang/phobos#11051).
+- **Enums for protocol names.** For a fixed set of wire strings such as plugin names, use a `ubyte` enum whose members are spelled exactly like the wire names; the protocol's own spelling beats camelCase here.
+  - `to!string` then gives the name to send. It returns the stored literal and doesn't allocate for a valid member, but it isn't `nothrow` or `@nogc`.
+  - To parse untrusted input, loop over the members: `static foreach (m; __traits(allMembers, E)) if (name == m) return __traits(getMember, E, m);`. This is `nothrow @nogc` and compares the packet slice directly, with no `idup`. Don't use `to!E(name)`, which throws `ConvException` on unknown names.
+  - Each name then appears once, instead of in a parse table and a format table that can drift apart.
+  - With a `string`-based enum, `to!string` returns the member's identifier, not its value.
+- **Small idioms:**
+  - Test byte vectors: `cast(const(ubyte)[]) std.conv.hexString!"0a1b..."` instead of hand-written hex decoding.
+  - Strip leading zero bytes with `find!(b => b != 0)`.
+  - Copy (`idup`) a slice only where it must outlive the buffer; an error message built inside `enforce` is lazy, so copying there is fine.
+- **Function attributes** (`@safe`, `@trusted`, `pure`, `nothrow`, `@nogc`, `scope`). Sources: the D spec (function.html, attribute.html), the D blog's memory-safety series, and the D forum consensus. Behaviour checked with LDC 1.27.1 and 1.36 (2026-11-08).
+  - **Inference.** Templates, `auto` functions, nested functions and lambdas infer `@safe`, `pure`, `nothrow` and `@nogc`. Other functions infer nothing, even when their body is visible.
+    - Write the attributes on ordinary functions, public API first.
+    - Leave them off templates. An attribute written on a template binds every instantiation (an `@safe` template rejects a `T` whose copy is `@system`).
+    - Lock in what a template infers with an attributed unittest that instantiates it with plain types, e.g. `@safe pure nothrow @nogc unittest`.
+  - **`@safe:` at module scope** covers everything after it, templates included; they still infer the other attributes. `pure`, `nothrow` and `@nogc` don't propagate into struct and class bodies.
+  - **`@trusted` promises a safe interface.** For every argument a `@safe` caller can pass, the function must not corrupt memory or create an unsafe value, such as a dangling pointer or a `bool` other than 0 or 1. The compiler doesn't check the body.
+    - Keep the trusted part as small as possible: trust the one `@system` call, e.g. `(() @trusted => v.get!T)()`, with a comment saying why it is safe.
+    - A trusted lambda makes the enclosing function part of the review. Whatever the lambda relies on, such as a length checked a few lines earlier, must stay true when that function changes.
+    - A `cast(ubyte[])` view of values without indirections is fine for reading. Writing arbitrary bytes into `bool` or enum values through such a view creates invalid values; normalize them before `@safe` code sees them.
+  - **Never mark a template `@trusted` if its body copies, constructs or destroys a `T`.** The attribute hides `T`'s `@system` postblit, copy constructor or destructor. Checked: `V wrap(T)(ref T v) @trusted { T copy = v; ... }` compiles in `@safe` code for a struct with a `@system` postblit. Trust only the `@system` call inside, which lets inference catch `T`, or constrain `T` (`!hasIndirections!T`, `!hasElaborateCopyConstructor!T`).
+  - **`nothrow`**: only `Error`s may escape.
+    - Wrap calls that can't actually throw in `std.exception.assumeWontThrow`, or in `try ... catch (Exception e) assert(0, e.msg);`.
+    - Never catch `Error` or `Throwable` to make code `nothrow`.
+  - **`@nogc`** forbids `new`, array appending and concatenation, closures that escape, and `throw new`. Use it for leaf hot paths (codecs, parsers); error paths that throw stay outside it.
+  - **`debug` statements** may break `pure`, `nothrow` and `@nogc`, which helps temporary logging. They compile only with `-debug`; don't leave them in committed code.
+  - **`scope` and `return scope`** are checked only in `@safe` code compiled with `-preview=dip1000`, which is still not the default (D 2.113, August 2026).
+    - Without that switch, `scope` is an unchecked promise. With it, callers may pass stack memory to a `scope` parameter, so a `@trusted` or `@system` function that keeps such a parameter has a memory bug.
+    - dbwire is dip1000-clean on current compilers: CI runs its unit tests with `-preview=dip1000` on dmd-latest and ldc-latest (dbwire#50). Older Phobos isn't: 2.097's `std.socket` has no `scope` annotations. The connectors haven't been checked yet. Don't add `scope` speculatively.
+- **Changes to someone else's code: keep the diff small.** Keep the existing structure, and change the input instead of the cases. For example, when MySQL 8.4 inserted a `Language` column after `Type` in `SHOW PROCEDURE STATUS` (5.7, 8.0 and MariaDB don't have it; the manual doesn't list it), the fix kept the old switch on column numbers: skip column 3 when there are 12 columns, and shift the later indexes down by one.
+- **Check facts before writing them down.** Verify server behaviour on the real servers, since manuals lag behind. Take CI failure reasons from the job logs, not from memory. A wrong reason in a commit message had to be corrected during that review.
+- **CI facts (November 2026):**
+  - GitHub retired the `ubuntu-20.04` runners. When a matrix tests old compilers, pin a concrete image instead of `ubuntu-latest`, and prefer the oldest one still offered: `ubuntu-22.04` today (likely until mid-2027). The mysql-native reviewers asked for that as the most conservative choice, and old compilers down to dmd 2.097 / ldc 1.27 pass on it.
+  - `macos-latest` is macOS 26 on arm64. There:
+    - `setup-dlang` installs no DMD;
+    - `setup-dlang@v1` requests `ldc2-1.28.1-osx-aarch64.tar.xz`, while LDC names the file `osx-arm64`, so the download fails with a 404.
+  - `macos-15-intel` runs dmd-latest, dmd 2.098.1 and LDC 1.28.1. On macOS 15, even Intel, the dmd 2.101.2 binary doesn't run and LDC 1.31.0's dub crashes (SIGSEGV).
+  - With `setup-dlang@v2.0.0`, programs built by LDC 1.30, 1.35 or 1.40.1 crash (segfault, even hello world) on `macos-latest`, `macos-15` and `macos-15-intel`. LDC 1.41.0 is the oldest that works there, so our CI tests ldc-latest and 1.41.0 on macOS, and the older LDCs on Linux.
+  - `WebFreak001/dub-upgrade@v0.1.1` uses GitHub's retired cache service ("getCacheEntry failed"); v0.2.0 works.

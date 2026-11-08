@@ -55,7 +55,8 @@ struct ConnectionOptions
     /// Quota key, for quotas keyed by client-supplied keys.
     string quotaKey;
 
-    /// Maximum time to establish the TCP connection.
+    /// Maximum time to establish the TCP connection (and the TLS handshake);
+    /// `Duration.zero` means no limit.
     Duration connectTimeout = 10.seconds;
     /// Maximum time a single socket write may block.
     Duration sendTimeout = 300.seconds;

@@ -331,7 +331,10 @@ alias Decimal256Column = DecimalColumn!Int256;
     assertThrown!ClientException(c.appendString("x"));
     assertThrown!ClientException(c.appendDouble(double.infinity));
     assert(c.length == 4); // failed appends add nothing
-    assert((() @trusted => c.getVariant(0).get!Decimal)() == Decimal.fromString("1.55")); // Variant.get is not @safe
+    // Variant.get is not @safe. Take the value into a variable first: comparing the lambda's
+    // result directly gives false with DMD 2.105 to 2.109 (fine with LDC and other DMDs)
+    const fromVariant = (() @trusted => c.getVariant(0).get!Decimal)();
+    assert(fromVariant == Decimal.fromString("1.55"));
 
     auto wide = new Decimal256Column("w", "Decimal(76, 40)", 76, 40);
     wide.appendString("-123456789012345678901234567890123456.1234567890123456789012345678901234567890");
