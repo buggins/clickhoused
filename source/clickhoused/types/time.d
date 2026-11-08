@@ -298,7 +298,7 @@ private string formatTime(long ticks, uint precision) @safe pure
     import std.format : format;
 
     const negative = ticks < 0;
-    const magnitude = negative ? -ticks : ticks;
+    const ulong magnitude = negative ? -cast(ulong) ticks : ticks; // also for long.min
     const scale = tenTo(precision);
     const whole = magnitude / scale;
     auto text = format("%s%02d:%02d:%02d", negative ? "-" : "", whole / 3600, whole / 60 % 60, whole % 60);
@@ -451,4 +451,11 @@ private Nullable!long parseTime(string text, uint precision, bool fraction) @saf
         0xff, 0x9f, 0xb8, 0x30, 0x46, 0x03, 0x00, 0x00
     ],
     "999:59:59.999999");
+}
+
+@safe unittest
+{
+    // The extremes format without overflow (the server never sends them)
+    assert(formatTime(long.min, 0) == "-2562047788015215:30:08");
+    assert(formatTime(long.min, 9) == "-2562047:47:16.854775808");
 }

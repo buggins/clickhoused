@@ -13,6 +13,9 @@ import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter, StringArena, readString, writeString;
 import clickhoused.types.column;
 
+/// Largest `N` of `FixedString(N)`, as the server limits it (`MAX_FIXEDSTRING_SIZE`).
+enum size_t maxFixedStringSize = 0xFF_FFFF;
+
 /++
 `String` column. Values are arbitrary bytes, not necessarily valid UTF-8.
 
@@ -190,11 +193,13 @@ final class FixedStringColumn : Column
 
     override void readData(BufferedReader reader, size_t rows) @safe
     {
+        // Steps of about 1 MB (at least one value), so memory grows only with data received
+        const chunkRows = width >= 1 << 20 ? 1 : (1 << 20) / width;
         bytes = null;
         size_t done;
         while (done < rows)
         {
-            const count = rows - done < readChunkRows ? rows - done : readChunkRows;
+            const count = rows - done < chunkRows ? rows - done : chunkRows;
             const start = bytes.length;
             bytes.length = start + count * width;
             reader.readExact(bytes[start .. $]);

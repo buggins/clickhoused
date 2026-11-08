@@ -347,12 +347,13 @@ T readValue(T)(Column column, size_t row) @safe if (isMappableValue!T)
             return column.getDuration(row);
         else static if (is(U == JSONValue))
         {
-            import std.json : JSONException, parseJSON;
+            import clickhoused.types.json : tryParseJson;
 
-            try
-                return parseJSON(column.getString(row));
-            catch (JSONException e)
-                throw new ClientException("Column '" ~ column.name ~ "' (" ~ column.typeName ~ "): not JSON: " ~ e.msg);
+            JSONValue value;
+            string error;
+            if (!tryParseJson(column.getString(row), value, error))
+                throw new ClientException("Column '" ~ column.name ~ "' (" ~ column.typeName ~ "): not JSON: " ~ error);
+            return value;
         }
         else static if (is(U == TimeOfDay))
         {
@@ -416,7 +417,8 @@ struct RowRange(T) if (is(T == struct))
     @property T front()
     {
         load();
-        assert(loaded, "RowRange.front called on an empty range");
+        if (!loaded) // a check, not an assert: -release removes those
+            throw new ClientException("RowRange.front called on an empty range");
         return current;
     }
 
@@ -424,7 +426,8 @@ struct RowRange(T) if (is(T == struct))
     void popFront()
     {
         load();
-        assert(loaded, "RowRange.popFront called on an empty range");
+        if (!loaded)
+            throw new ClientException("RowRange.popFront called on an empty range");
         loaded = false;
         row++;
     }
@@ -462,16 +465,29 @@ struct RowRange(T) if (is(T == struct))
                 bound = bindColumns!T(block);
                 bindFast!T(fast, bound);
             }
-            catch (ClientException e)
-            {
-                result_.close(); // free the connection: the rest of the result is useless
-                block = null;
-                throw e;
-            }
+            catch (Exception e)
+                abandon(e); // the rest of the result is useless
             row = 0;
         }
-        current = readStruct!T(bound, fast, row);
+        try
+            current = readStruct!T(bound, fast, row);
+        catch (Exception e)
+            abandon(e); // e.g. NULL for a non-nullable field
         loaded = true;
+    }
+
+    // Frees the connection after a mapping error and rethrows it; an error while closing
+    // doesn't replace it
+    private noreturn abandon(Exception e)
+    {
+        try
+            result_.close();
+        catch (Exception)
+        {
+            // the connection is closed then
+        }
+        block = null;
+        throw e;
     }
 }
 

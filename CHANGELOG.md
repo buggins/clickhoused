@@ -13,6 +13,31 @@ All notable changes to this project are documented here. The project follows [Se
   - the next host tried when a socket can't be created;
   - builds with `-preview=dip1000`.
 - `ConnectionOptions.connectTimeout` (`connect_timeout` in a DSN): `Duration.zero` (`0`) now means no limit. It used to fail at once.
+- `Connection.cancel` (#69) is now kept apart from the client's own packets by a lock. A cancel made while the query is still being sent goes out right after it, instead of inside it. A late cancel no longer reaches the server during the next query, where it silently emptied or truncated that query's result.
+- New limits on what the server can send (#69):
+  - nested types up to `maxTypeDepth` (100) levels;
+  - nested exceptions up to `maxNestedExceptions` (64);
+  - JSON text up to the server's own nesting (1001 levels, `maxJsonDepth`);
+  - `FixedString(N)` up to the server's `N` limit (16 MB).
+
+### Fixed
+- **Crashes from server data (#69):**
+  - deep type names, nested exceptions and deeply nested JSON overflowed the stack;
+  - `LowCardinality(Nullable)` without an argument threw a `RangeError`;
+  - a huge `FixedString(N)` desynchronized the stream or threw `OutOfMemoryError`.
+- **Connection state (#69):**
+  - a value that doesn't convert in the middle of a `query!T` result left the connection busy;
+  - `query`, `beginInsert` and `ping` set the busy state only after writing, so another task (fiber mode) could start a query meanwhile;
+  - `QueryResult.close` and `drain` threw on a connection already closed by an error;
+  - `QueryResult.front`/`popFront` fetched inside an `assert`, so with `-release` `front` returned null unless `empty` was called first.
+- **Smaller fixes (#69):**
+  - `Inserter.addRow` with `std.variant.Variant` values didn't compile;
+  - JSON text with a number beyond `double` threw `ConvException`; it is now a `ClientException`;
+  - float columns' `getLong`/`getUlong` accepted 2^63 and 2^64 on arm64;
+  - LZ4 frames: the declared sizes are checked against the data before memory is allocated for them;
+  - enum types with repeated labels or values are rejected;
+  - `VariantColumn.appendTo` with a bad index threw a `RangeError`;
+  - `Time64` text of the most negative value is correct.
 
 ## 0.9.0 — 2026-11-07
 

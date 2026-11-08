@@ -115,9 +115,19 @@ ubyte[] readFrame(BufferedReader reader) @safe
     if (compressedSize < headerSize || compressedSize > maxFrameSize || decompressedSize > maxFrameSize)
         throw new ProtocolException("Invalid compressed block sizes");
 
-    auto frame = new ubyte[compressedSize];
+    // Read in growing steps from 1 MB (what both sides normally send at most), so a corrupt
+    // size costs memory only for data that actually arrives
+    enum size_t firstStep = headerSize + 1024 * 1024;
+    auto frame = new ubyte[compressedSize < firstStep ? compressedSize : firstStep];
     frame[0 .. headerSize] = head[checksumSize .. $];
-    reader.readExact(frame[headerSize .. $]);
+    for (size_t filled = headerSize;;)
+    {
+        reader.readExact(frame[filled .. $]);
+        filled = frame.length;
+        if (filled == compressedSize)
+            break;
+        frame.length = compressedSize - filled < filled ? compressedSize : 2 * filled;
+    }
     if (cityHash128(frame) != expected)
         throw new ProtocolException("Compressed block checksum mismatch: corrupted data");
 
@@ -129,6 +139,9 @@ ubyte[] readFrame(BufferedReader reader) @safe
             throw new ProtocolException("Uncompressed block has a wrong size");
         return frame[headerSize .. $];
     case methodLz4:
+        // LZ4 expands at most about 255 times (one 255 length byte per 255 bytes out)
+        if (decompressedSize > payload.length * 255)
+            throw new ProtocolException("Invalid compressed block sizes");
         return lz4Decompress(payload, decompressedSize);
     case methodZstd:
         version (ClickHousedZstd)
@@ -312,6 +325,34 @@ final class CompressedOutput : Transport
 
     static if (!zstdAvailable)
         assertThrown!ClientException(encodeFrame(payload, Compression.zstd));
+
+    // Frames larger than the first read step (uncompressed: 3 MB) are read in growing steps
+    auto big = new ubyte[3_000_000];
+    foreach (i, ref b; big)
+        b = cast(ubyte)(i * 7);
+    t = new MockTransport;
+    t.feed(encodeFrame(big, Compression.none));
+    assert(readFrame(new BufferedReader(t)) == big);
+
+    // A size claimed in the header costs memory only as far as data arrives
+    import clickhoused.exception : ConnectionException;
+
+    frame = encodeFrame(payload[0 .. 1000], Compression.none);
+    frame[checksumSize + 1 .. checksumSize + 5] = toLittleEndian(cast(uint) maxFrameSize);
+    t = new MockTransport;
+    t.feed(frame);
+    assertThrown!ConnectionException(readFrame(new BufferedReader(t)));
+
+    // An LZ4 size beyond what the data can expand to is refused before decompressing
+    frame = encodeFrame(payload[0 .. 1000], Compression.lz4);
+    const payloadLength = frame.length - checksumSize - headerSize;
+    frame[checksumSize + 5 .. checksumSize + 9] = toLittleEndian(cast(uint)(payloadLength * 255 + 1));
+    const sum = cityHash128(frame[checksumSize .. $]);
+    frame[0 .. 8] = toLittleEndian(sum.low);
+    frame[8 .. 16] = toLittleEndian(sum.high);
+    t = new MockTransport;
+    t.feed(frame);
+    assertThrown!ProtocolException(readFrame(new BufferedReader(t)));
 }
 
 @safe unittest

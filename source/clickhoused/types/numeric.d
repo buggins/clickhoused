@@ -28,7 +28,8 @@ final class NumericColumn(T) : FixedColumn!T if (isIntegral!T || isFloatingPoint
         const v = data[row];
         static if (isFloatingPoint!T)
         {
-            if (v != cast(long) v)
+            // Range first: casting a value outside long is undefined (saturates on arm64)
+            if (!(v >= -0x1p63 && v < 0x1p63) || v != cast(long) v)
                 throw conversionError(row, "long");
             return cast(long) v;
         }
@@ -47,7 +48,7 @@ final class NumericColumn(T) : FixedColumn!T if (isIntegral!T || isFloatingPoint
         const v = data[row];
         static if (isFloatingPoint!T)
         {
-            if (v < 0 || v != cast(ulong) v)
+            if (!(v >= 0 && v < 0x1p64) || v != cast(ulong) v)
                 throw conversionError(row, "ulong");
             return cast(ulong) v;
         }
@@ -207,6 +208,14 @@ alias Float64Column = NumericColumn!double;
     assert(f.getLong(0) == 2 && f.getDouble(1) == 2.5);
     assertThrown!ClientException(f.getLong(1));
     assertThrown!ClientException(f.getSysTime(0));
+    // Just outside the range: rejected on every platform (an out-of-range cast saturates on arm64)
+    auto edge = new Float64Column("e", "Float64");
+    edge.data = [0x1p63, 0x1p64, -0x1p63, double.nan];
+    assertThrown!ClientException(edge.getLong(0));
+    assertThrown!ClientException(edge.getUlong(1));
+    assert(edge.getLong(2) == long.min && edge.getUlong(0) == 1UL << 63);
+    assertThrown!ClientException(edge.getLong(3));
+    assertThrown!ClientException(edge.getUlong(3));
 }
 
 @safe unittest

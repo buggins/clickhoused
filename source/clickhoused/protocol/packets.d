@@ -10,7 +10,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.protocol.packets;
 
-import clickhoused.exception : ClientException, ServerException;
+import clickhoused.exception : ClientException, ProtocolException, ServerException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter, readString, readUVarInt, writeString, writeUVarInt;
 import clickhoused.protocol.codes;
 
@@ -216,16 +216,40 @@ void writeDataHeader(BufferedWriter w, string tableName = "") @safe
     w.writeString(tableName);
 }
 
-/// Reads the body of an Exception packet, including nested exceptions.
+/// Most nested exceptions read from one Exception packet (current servers send none).
+enum size_t maxNestedExceptions = 64;
+
+/++
+Reads the body of an Exception packet, including nested exceptions.
+
+Throws: `ProtocolException` if more than `maxNestedExceptions` are nested.
++/
 ServerException readException(BufferedReader r) @safe
 {
-    const code = r.readFixed!int();
-    const name = r.readString();
-    const message = r.readString();
-    const stackTrace = r.readString();
-    const hasNested = r.readFixed!bool();
-    auto nested = hasNested ? readException(r) : null;
-    return new ServerException(code, name, message, stackTrace, nested);
+    static struct Part
+    {
+        int code;
+        string name, message, stackTrace;
+    }
+
+    // In a loop, not recursively: each level costs the server only a few bytes
+    Part[] parts;
+    for (bool more = true; more;)
+    {
+        if (parts.length > maxNestedExceptions)
+            throw new ProtocolException("Too many nested exceptions from the server");
+        Part p;
+        p.code = r.readFixed!int();
+        p.name = r.readString();
+        p.message = r.readString();
+        p.stackTrace = r.readString();
+        more = r.readFixed!bool();
+        parts ~= p;
+    }
+    ServerException e;
+    foreach_reverse (p; parts)
+        e = new ServerException(p.code, p.name, p.message, p.stackTrace, e);
+    return e;
 }
 
 /// Reads the body of a Progress packet.
@@ -387,6 +411,23 @@ private string hostName() @safe nothrow
     const e = readException(new BufferedReader(t));
     assert(e.code == 62 && e.serverMessage == "Syntax error");
     assert(e.nested !is null && e.nested.name == "DB::Inner" && e.nested.serverStackTrace == "trace");
+    assert(e.nested.nested is null);
+
+    // Deep nesting is refused, not followed into a stack overflow
+    import std.exception : assertThrown;
+
+    t = new MockTransport;
+    w = new BufferedWriter(t);
+    foreach (i; 0 .. 100_000)
+    {
+        w.writeFixed!int(1);
+        foreach (_; 0 .. 3)
+            w.writeString("");
+        w.writeFixed(true);
+    }
+    w.flush();
+    t.feed(t.written);
+    assertThrown!ProtocolException(readException(new BufferedReader(t)));
 }
 
 @safe unittest
