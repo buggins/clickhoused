@@ -585,7 +585,9 @@ final class VariantColumn : Column
     auto a = createColumn("a", "Array(Variant(String, UInt64))");
     a.appendString("[1, 'a', NULL, '2']");
     assert(a.getString(0) == "[1,'a',NULL,'2']");
-    auto e = cast(VariantColumn)(cast(clickhoused.types.array.ArrayColumn) a).elements;
+    import clickhoused.types.array : ArrayColumn;
+
+    auto e = cast(VariantColumn)(cast(ArrayColumn) a).elements;
     assert(e.discriminators == [1, 0, VariantColumn.nullDiscriminator, 0]);
 
     // truncate and appendFrom

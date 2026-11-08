@@ -455,7 +455,7 @@ final class Inserter
     }
 }
 
-private size_t estimateSize(T)(auto ref T value) @safe pure nothrow
+private size_t estimateSize(T)(auto ref T value) // attributes inferred (see the unittest below)
 {
     import std.traits : Unqual;
 
@@ -478,6 +478,14 @@ private size_t estimateSize(T)(auto ref T value) @safe pure nothrow
     }
     else
         return 8;
+}
+
+// estimateSize stays @safe pure nothrow @nogc for the plain types
+@safe pure nothrow @nogc unittest
+{
+    assert(estimateSize(5) == 8 && estimateSize("abc") == 11 && estimateSize(null) == 1);
+    static immutable int[] values = [1, 2];
+    assert(estimateSize(values) == 24);
 }
 
 private string toText(size_t n) @safe pure

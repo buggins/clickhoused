@@ -392,7 +392,7 @@ private struct U128
 }
 
 /// Propagates a last digit of 10 left (moving the point if a new digit appears) and drops trailing zeros.
-private ShortestDigits carry(char[] digits, int pointPos) @safe pure
+private ShortestDigits carry(scope char[] digits, int pointPos) @safe pure
 {
     size_t i = digits.length;
     while (i > 0 && digits[i - 1] > '9')

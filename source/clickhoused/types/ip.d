@@ -10,7 +10,8 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : appendFast, Column, FixedColumn, growRows, growUninitialized, makeVariant;
+import clickhoused.types.column : appendFast, bytesOf, Column, FixedColumn, growRows, growUninitialized, makeVariant,
+    writableBytesOf;
 
 /++
 An IPv4 address. `value` is the address as a number: `1.2.3.4` is
@@ -457,13 +458,13 @@ final class IPv6Column : Column
         {
             const start = data.length;
             data = growUninitialized(data, growRows(start, rows)); // overwritten right away: not zeroed
-            reader.readExact((() @trusted => cast(ubyte[]) data[start .. $])()); // 16 bytes each, as on the wire
+            reader.readExact(writableBytesOf(data[start .. $])); // 16 bytes each, as on the wire
         }
     }
 
     override void writeData(BufferedWriter writer) const @safe
     {
-        writer.writeBytes((() @trusted => cast(const(ubyte)[]) data)()); // 16 bytes each, as on the wire
+        writer.writeBytes(bytesOf(data)); // 16 bytes each, as on the wire
     }
 
     /// The address in `row`.

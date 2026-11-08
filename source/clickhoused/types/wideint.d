@@ -14,7 +14,8 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : appendFast, Column, growRows, growUninitialized, makeVariant;
+import clickhoused.types.column : appendFast, bytesOf, Column, growRows, growUninitialized, makeVariant,
+    writableBytesOf;
 
 /// Column of 128- or 256-bit integers (`Int128`, `UInt128`, `Int256`, `UInt256`).
 final class WideIntColumn(W) : Column if (isWideInt!W)
@@ -48,7 +49,7 @@ final class WideIntColumn(W) : Column if (isWideInt!W)
             const start = data.length;
             data = growUninitialized(data, growRows(start, rows)); // overwritten right away: not zeroed
             version (LittleEndian)
-                reader.readExact((() @trusted => cast(ubyte[]) data[start .. $])()); // same layout as the wire
+                reader.readExact(writableBytesOf(data[start .. $])); // same layout as the wire
             else
             {
                 foreach (ref v; data[start .. $])
@@ -61,7 +62,7 @@ final class WideIntColumn(W) : Column if (isWideInt!W)
     override void writeData(BufferedWriter writer) const @safe
     {
         version (LittleEndian)
-            writer.writeBytes((() @trusted => cast(const(ubyte)[]) data)()); // same layout as the wire
+            writer.writeBytes(bytesOf(data)); // same layout as the wire
         else
         {
             foreach (v; data)

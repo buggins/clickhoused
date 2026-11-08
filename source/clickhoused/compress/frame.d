@@ -60,7 +60,7 @@ Params:
     method = compression method; `Compression.none` stores the data as is.
     zstdLevel = ZSTD compression level.
 
-Throws: `ClientException` if ZSTD is requested but not compiled in.
+Throws: `ClientException` if ZSTD is requested but not compiled in, or fails.
 +/
 ubyte[] encodeFrame(scope const(ubyte)[] data, Compression method, int zstdLevel = 1) @safe
 {

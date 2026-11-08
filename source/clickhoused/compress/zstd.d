@@ -10,7 +10,7 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.compress.zstd;
 
-version (ClickHousedZstd)  : import clickhoused.exception : ProtocolException;
+version (ClickHousedZstd)  : import clickhoused.exception : ClientException, ProtocolException;
 
 // libzstd functions, under D-style names
 private extern (C) nothrow @nogc @system
@@ -24,14 +24,18 @@ private extern (C) nothrow @nogc @system
     pragma(mangle, "ZSTD_getErrorName") const(char)* zstdErrorName(size_t code);
 }
 
-/// Compresses `src` into a ZSTD frame at `level` (1 is fast, up to 22).
-ubyte[] zstdCompress(scope const(ubyte)[] src, int level) @trusted
+/++
+Compresses `src` into a ZSTD frame at `level` (1 is fast, up to 22).
+
+Throws: `ClientException` if libzstd fails.
++/
+ubyte[] zstdCompress(scope const(ubyte)[] src, int level) @safe
 {
-    // The buffers passed to the C functions are D arrays of the stated sizes.
-    auto dst = new ubyte[zstdBound(src.length)];
-    const n = zstdCompressRaw(dst.ptr, dst.length, src.ptr, src.length, level);
-    if (zstdIsError(n))
-        throw new ProtocolException("ZSTD compression failed: " ~ errorName(n));
+    auto dst = new ubyte[(() @trusted => zstdBound(src.length))()]; // a pure size computation
+    // ZSTD_compress writes at most dst.length bytes and reads src.length bytes
+    const n = (() @trusted => zstdCompressRaw(dst.ptr, dst.length, src.ptr, src.length, level))();
+    if ((()@trusted => zstdIsError(n))())
+        throw new ClientException("ZSTD compression failed: " ~ errorName(n)); // a local failure, not the server's
     return dst[0 .. n];
 }
 
@@ -40,12 +44,12 @@ Decompresses a ZSTD frame that expands to exactly `decompressedSize` bytes.
 
 Throws: `ProtocolException` if the data is corrupt or has a different size.
 +/
-ubyte[] zstdDecompress(scope const(ubyte)[] src, size_t decompressedSize) @trusted
+ubyte[] zstdDecompress(scope const(ubyte)[] src, size_t decompressedSize) @safe
 {
-    // The buffers passed to the C functions are D arrays of the stated sizes.
     auto dst = new ubyte[decompressedSize];
-    const n = zstdDecompressRaw(dst.ptr, dst.length, src.ptr, src.length);
-    if (zstdIsError(n))
+    // ZSTD_decompress writes at most dst.length bytes and reads src.length bytes
+    const n = (() @trusted => zstdDecompressRaw(dst.ptr, dst.length, src.ptr, src.length))();
+    if ((()@trusted => zstdIsError(n))())
         throw new ProtocolException("ZSTD decompression failed: " ~ errorName(n));
     if (n != decompressedSize)
         throw new ProtocolException("ZSTD block has a wrong decompressed size");

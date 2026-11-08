@@ -39,7 +39,7 @@ $(UL
     $(LI `null` and empty `Nullable` as `NULL`; other arrays as `[…]`.)
 )
 +/
-string formatLiteral(T)(auto ref const T value) @safe
+string formatLiteral(T)(auto ref const T value) // attributes inferred: @safe for the types above (unittests)
 {
     import std.conv : to;
     import std.format : format;
@@ -218,7 +218,7 @@ private string quoteString(scope const(char)[] s) @safe pure
 Quotes a column or table name for use in SQL: `name` becomes `` `name` ``.
 Backquotes and backslashes inside the name are escaped.
 +/
-string quoteIdentifier(string name) @safe pure
+string quoteIdentifier(string name) @safe pure nothrow
 {
     string s = "`";
     foreach (char c; name)

@@ -105,7 +105,8 @@ final class Connection : Poolable
     package ClientIdentity identity;
 
     /// Called for every progress packet with the counters' increments.
-    /// The accumulated totals are in `QueryResult.stats`.
+    /// The accumulated totals are in `QueryResult.stats`. An exception thrown by
+    /// this or the other callbacks closes the connection (the query is left unread).
     void delegate(const Progress increment) @safe onProgress;
 
     /++
@@ -136,6 +137,7 @@ final class Connection : Poolable
         import clickhoused : clickhousedVersionMajor, clickhousedVersionMinor, clickhousedVersionPatch;
 
         this.options = options;
+        this.options.settings = options.settings.dup; // the caller's array may change later (or be shared by a pool)
         // The user and host name go with every query: looked up once
         identity = ClientIdentity(options.clientName, clickhousedVersionMajor, clickhousedVersionMinor,
                 clickhousedVersionPatch, localOsUser(), localHostName());
@@ -415,7 +417,18 @@ final class Connection : Poolable
         catch (ClientException e)
         {
             if (!ins.isFinished && isOpen)
-                ins.finish(); // ends the insert with no rows
+            {
+                try
+                    ins.finish(); // ends the insert with no rows
+                catch (Exception second)
+                {
+                    // chained after the block's error, which comes first (chainTogether isn't @safe)
+                    Throwable last = e;
+                    while (last.next !is null)
+                        last = last.next;
+                    last.next = second;
+                }
+            }
             throw e;
         }
         return ins.finish();
@@ -618,6 +631,8 @@ final class Connection : Poolable
         if (options.compression == Compression.zstd && !zstdAvailable)
             throw new ClientException("ZSTD compression is not compiled in: build clickhoused with the 'zstd' "
                     ~ "configuration, or use Compression.lz4");
+        if (options.compression == Compression.zstd && (options.zstdLevel < 1 || options.zstdLevel > 22))
+            throw new ClientException("ConnectionOptions.zstdLevel must be 1 to 22"); // also set in code, not only in a DSN
         backend = backendFor(options.ioMode);
         cancelLock = backend.newLock();
         // Loads OpenSSL and the certificates once; problems here are not host-specific
@@ -1137,4 +1152,11 @@ version (unittest)
     auto s = new ScriptedServer;
     s.exception(516, "Authentication failed");
     assertThrown!ServerException(s.connect());
+
+    // A ZSTD level out of range, set in code, fails before connecting (without ZSTD compiled in, that fails first)
+    ConnectionOptions options;
+    options.compression = Compression.zstd;
+    options.zstdLevel = 30;
+    options.transportFactory = (host, port, timeout) => cast(Transport) new ScriptedServer().transport;
+    assertThrown!ClientException(new Connection(options));
 }

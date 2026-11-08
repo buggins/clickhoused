@@ -200,6 +200,7 @@ struct ConnectionOptions
     {
         import std.algorithm.searching : startsWith;
         import std.conv : ConvException, to;
+        import std.uni : toLower;
 
         ConnectionOptions options;
         foreach (key, value; params)
@@ -253,6 +254,8 @@ struct ConnectionOptions
                 break;
             case "zstd_level":
                 options.zstdLevel = parse!int;
+                if (options.zstdLevel < 1 || options.zstdLevel > 22)
+                    throw new ClientException("Invalid value '" ~ value ~ "' for '" ~ key ~ "' (1 to 22)");
                 break;
             case "connect_timeout":
                 options.connectTimeout = parseSeconds(key, value);
@@ -277,7 +280,8 @@ struct ConnectionOptions
                 options.quotaKey = value;
                 break;
             case "yield_between_blocks":
-                options.yieldBetweenBlocks = parse!bool;
+                // also 1/0, as the other flags; any case, as std.conv's to!bool accepted before
+                options.yieldBetweenBlocks = parseFlag(key, value.toLower);
                 break;
             case "simple_native_formats":
                 options.simpleNativeFormats = parseFlag(key, value);
@@ -357,10 +361,13 @@ struct ConnectionOptions
         "http://h", "clickhouse://", "clickhouse://h:notaport", "clickhouse://h:99999",
         "clickhouse://h?compress=x",
         "clickhouse://h?connect_timeout=-1", "clickhouse://h?io=threads", "clickhouse://h?secure=yes",
-        "clickhouse://h?skip_verify=2",
+        "clickhouse://h?skip_verify=2", "clickhouse://h?zstd_level=0", "clickhouse://h?zstd_level=23",
+        "clickhouse://h?yield_between_blocks=maybe",
         "clickhouse://[::1", "clickhouse://h?x=%zz",
     ])
         assertThrown!ClientException(ConnectionOptions.fromDsn(bad), bad);
+    assert(!ConnectionOptions.fromDsn("clickhouse://h?yield_between_blocks=0").yieldBetweenBlocks);
+    assert(!ConnectionOptions.fromDsn("clickhouse://h?yield_between_blocks=False").yieldBetweenBlocks);
 }
 
 ///

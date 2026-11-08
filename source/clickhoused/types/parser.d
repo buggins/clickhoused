@@ -11,6 +11,8 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types.parser;
 
+import std.ascii : isDigit;
+
 import clickhoused.exception : ProtocolException;
 
 /// A parsed type: a name with optional arguments, e.g. `FixedString(16)`.
@@ -446,17 +448,16 @@ private struct Parser
     }
 }
 
-private bool isDigit(char c) @safe pure nothrow @nogc
-{
-    return c >= '0' && c <= '9';
-}
-
 private bool isIdentStart(char c) @safe pure nothrow @nogc
 {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    import std.ascii : isAlpha;
+
+    return isAlpha(c) || c == '_';
 }
 
 private bool isIdentChar(char c) @safe pure nothrow @nogc
 {
-    return isIdentStart(c) || isDigit(c);
+    import std.ascii : isAlphaNum;
+
+    return isAlphaNum(c) || c == '_';
 }
