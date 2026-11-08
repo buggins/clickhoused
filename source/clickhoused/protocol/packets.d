@@ -25,6 +25,11 @@ struct ClientIdentity
     ulong versionMinor;
     /// Client patch version.
     ulong versionPatch;
+    /// The operating system user and the host name sent with every query
+    /// (`Connection` fills them in from the environment).
+    string osUser;
+    /// ditto
+    string hostName;
 }
 
 /// Server information received in the handshake.
@@ -294,8 +299,8 @@ private void writeClientInfo(BufferedWriter w, ulong revision, const ClientIdent
     if (revision >= Revision.withInitialQueryStartTime)
         w.writeFixed!ulong(0); // initial query start time, filled in by the server
     w.writeFixed!ubyte(ClientInterface.tcp);
-    w.writeString(osUser());
-    w.writeString(hostName());
+    w.writeString(client.osUser);
+    w.writeString(client.hostName);
     w.writeString(client.name);
     w.writeUVarInt(client.versionMajor);
     w.writeUVarInt(client.versionMinor);
@@ -338,29 +343,48 @@ private string quoteParameter(string value) @safe pure
     return s ~ "'";
 }
 
-private string osUser() @safe nothrow
+/++
+The operating system user running the program (`USER` or `USERNAME`), or null.
+Looked up once per thread: the value doesn't change, and new pool connections
+then cost nothing.
++/
+package(clickhoused) string localOsUser() @safe nothrow
 {
     import std.process : environment;
 
-    try
+    static bool known; // thread-local, so no locking
+    static string user;
+    if (!known)
     {
-        auto user = environment.get("USER");
-        if (user is null)
-            user = environment.get("USERNAME");
-        return user;
+        try
+        {
+            user = environment.get("USER");
+            if (user is null)
+                user = environment.get("USERNAME");
+        }
+        catch (Exception)
+            user = null;
+        known = true;
     }
-    catch (Exception)
-        return null;
+    return user;
 }
 
-private string hostName() @safe nothrow
+/// The name of this host, or null; looked up once per thread, as `localOsUser`.
+package(clickhoused) string localHostName() @safe nothrow
 {
     import std.socket : Socket;
 
-    try
-        return Socket.hostName;
-    catch (Exception)
-        return null;
+    static bool known;
+    static string name;
+    if (!known)
+    {
+        try
+            name = Socket.hostName;
+        catch (Exception)
+            name = null;
+        known = true;
+    }
+    return name;
 }
 
 ///

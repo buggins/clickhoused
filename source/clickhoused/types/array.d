@@ -101,10 +101,18 @@ final class ArrayColumn : Column
     /// The elements in ClickHouse's text form, e.g. `[1,2,3]` or `['a','b']`.
     override string getString(size_t row) const @safe
     {
-        auto s = "[";
+        import std.array : appender;
+
+        auto s = appender!string; // piece by piece: `a ~ b` would allocate a temporary for each element
+        s.put('[');
         foreach (i; rowStart(row) .. rowEnd(row))
-            s ~= (i > rowStart(row) ? "," : "") ~ elements.getQuotedString(i);
-        return s ~ "]";
+        {
+            if (i > rowStart(row))
+                s.put(',');
+            s.put(elements.getQuotedString(i));
+        }
+        s.put(']');
+        return s.data;
     }
 
     /// The elements as raw bytes; only for `Array(UInt8)`.

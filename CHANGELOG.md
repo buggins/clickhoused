@@ -39,6 +39,20 @@ All notable changes to this project are documented here. The project follows [Se
   - `VariantColumn.appendTo` with a bad index threw a `RangeError`;
   - `Time64` text of the most negative value is correct.
 
+### Performance
+- **Decoding (#70):**
+  - `LowCardinality(String)` copies strings straight from the dictionary: about 1.8× faster;
+  - `IPv6`, `FixedString`, `Decimal` and the wide integers no longer zero-fill arrays they overwrite right away: 25–33% faster.
+- **Per query and per row (#70):**
+  - the client info's OS user and host name are looked up once per thread, not for every query;
+  - IPv6 text is built in one allocation instead of about ten;
+  - `Array`, `Tuple` and `Map` text is built without a temporary string per element.
+- **Inserts (#70):**
+  - `Inserter.flush` no longer re-checks its own blocks against the header;
+  - Decimal appends no longer format and re-parse the negative limit;
+  - Variant appends no longer allocate;
+  - Dynamic appends parse a type name only when it is new to the column.
+
 ## 0.9.0 — 2026-11-07
 
 The first 0.9.x release candidate before 1.0: the API may still change in 0.9.x, and 1.0 follows once it has settled. clickhoused now builds on [dbwire](https://github.com/buggins/dbwire) 0.8, the pure-D package it shares with postgresql-native, oracle-native and mssql-native; the old module paths keep working, but two changes are breaking (`ClickHouseException` and `Decimal.scale`, below). Still no C dependencies at build time.

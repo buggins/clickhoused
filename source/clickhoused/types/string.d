@@ -193,17 +193,17 @@ final class FixedStringColumn : Column
 
     override void readData(BufferedReader reader, size_t rows) @safe
     {
-        // Steps of about 1 MB (at least one value), so memory grows only with data received
-        const chunkRows = width >= 1 << 20 ? 1 : (1 << 20) / width;
+        // From about 1 MB (at least one value), doubling: memory grows only with data received
+        const firstRows = width >= 1 << 20 ? 1 : (1 << 20) / width;
         bytes = null;
         size_t done;
         while (done < rows)
         {
-            const count = rows - done < chunkRows ? rows - done : chunkRows;
-            const start = bytes.length;
-            bytes.length = start + count * width;
-            reader.readExact(bytes[start .. $]);
-            done += count;
+            const step = done > firstRows ? done : firstRows;
+            const target = rows - done < step ? rows : done + step;
+            bytes = growUninitialized(bytes, target * width); // overwritten right away: not zeroed
+            reader.readExact(bytes[done * width .. $]);
+            done = target;
         }
     }
 

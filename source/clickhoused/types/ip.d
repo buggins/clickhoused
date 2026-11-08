@@ -10,7 +10,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : appendFast, Column, FixedColumn, makeVariant, readChunkRows;
+import clickhoused.types.column : appendFast, Column, FixedColumn, growRows, growUninitialized, makeVariant;
 
 /++
 An IPv4 address. `value` is the address as a number: `1.2.3.4` is
@@ -112,29 +112,40 @@ struct IPv6
         if (bestLength < 2)
             bestLength = 0;
 
-        string s;
+        // Written into a buffer, then copied once: the longest text is
+        // "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255" (45 characters)
+        char[45] text;
+        size_t pos;
+        void put(scope const(char)[] part) @safe pure nothrow @nogc
+        {
+            text[pos .. pos + part.length] = part;
+            pos += part.length;
+        }
+
         foreach (i; 0 .. 8)
         {
             if (bestLength && i >= bestStart && i < bestStart + bestLength)
             {
                 if (i == bestStart)
-                    s ~= ':';
+                    put(":");
                 continue;
             }
             if (i != 0)
-                s ~= ':';
+                put(":");
             // An IPv4 address embedded after 96 zero bits, or after ::ffff:
             if (i == 6 && bestLength && bestStart == 0 && (bestLength == 6 || (bestLength == 5
                     && words[5] == 0xffff)))
             {
                 char[15] buffer;
-                return s ~ formatIPv4(bytes[12] << 24 | bytes[13] << 16 | bytes[14] << 8 | bytes[15], buffer);
+                put(formatIPv4(bytes[12] << 24 | bytes[13] << 16 | bytes[14] << 8 | bytes[15], buffer));
+                return text[0 .. pos].idup;
             }
-            s ~= hex(words[i]);
+            char[4] digits;
+            put(hex(words[i], digits));
         }
         if (bestLength && bestStart + bestLength == 8)
-            s ~= ':';
-        return s;
+            put(":");
+        return text[0 .. pos].idup;
     }
 }
 
@@ -278,10 +289,10 @@ private const(char)[] formatIPv4(uint value, return ref char[15] buffer) @safe p
     return buffer[0 .. pos];
 }
 
-private string hex(ushort w) @safe pure nothrow
+/// `w` in lowercase hex without leading zeros, written into `buffer`.
+private const(char)[] hex(ushort w, return ref char[4] buffer) @safe pure nothrow @nogc
 {
     static immutable digits = "0123456789abcdef";
-    char[4] buffer;
     size_t pos = 4;
     do
     {
@@ -289,7 +300,7 @@ private string hex(ushort w) @safe pure nothrow
         w >>= 4;
     }
     while (w);
-    return buffer[pos .. $].idup;
+    return buffer[pos .. $];
 }
 
 @safe unittest
@@ -445,8 +456,7 @@ final class IPv6Column : Column
         while (data.length < rows)
         {
             const start = data.length;
-            const count = rows - start < readChunkRows ? rows - start : readChunkRows;
-            data.length = start + count;
+            data = growUninitialized(data, growRows(start, rows)); // overwritten right away: not zeroed
             reader.readExact((() @trusted => cast(ubyte[]) data[start .. $])()); // 16 bytes each, as on the wire
         }
     }

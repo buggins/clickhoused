@@ -19,7 +19,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : appendFast, Column, makeVariant, readChunkRows;
+import clickhoused.types.column : appendFast, Column, growRows, growUninitialized, makeVariant;
 import clickhoused.types.wideint : Int128, Int256;
 
 /// Largest precision (and scale) of a ClickHouse decimal.
@@ -37,6 +37,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
     immutable uint scale;
 
     private Int256 maxUnscaled; // 10^precision - 1
+    private Int256 minUnscaled; // -(10^precision - 1)
 
     /++
     Creates an empty column.
@@ -53,6 +54,12 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
         this.scale = scale;
         char[maxDecimalPrecision] nines = '9';
         maxUnscaled = Int256.fromString(nines[0 .. precision]);
+        // its two's complement negation: no second parse for every column
+        foreach (i, w; maxUnscaled.words)
+            minUnscaled.words[i] = ~w;
+        foreach (ref w; minUnscaled.words)
+            if (++w != 0)
+                break;
     }
 
     /// Largest precision of the storage type.
@@ -69,8 +76,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
         while (data.length < rows)
         {
             const start = data.length;
-            const count = rows - start < readChunkRows ? rows - start : readChunkRows;
-            data.length = start + count;
+            data = growUninitialized(data, growRows(start, rows)); // overwritten right away: not zeroed
             version (LittleEndian)
                 reader.readExact((() @trusted => cast(ubyte[]) data[start .. $])()); // same layout as the wire
             else
@@ -183,7 +189,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
         catch (ClientException)
             throw appendError("decimal", value);
         const v = scaled.unscaled;
-        if (v > maxUnscaled || v < negativeMax())
+        if (v > maxUnscaled || v < minUnscaled)
             throw appendError("decimal", value);
         appendFast(data, spare, narrow(v));
     }
@@ -231,11 +237,6 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
         if (other.scale != scale || other.precision != precision)
             throw new ClientException("Column '" ~ name ~ "': cannot copy values of a different decimal type");
         appendFast(data, spare, other.data[row]);
-    }
-
-    private Int256 negativeMax() const @safe pure
-    {
-        return Int256.fromString("-" ~ maxUnscaled.toString());
     }
 
     private static Int256 widen(const T raw) @safe pure
@@ -343,6 +344,10 @@ alias Decimal256Column = DecimalColumn!Int256;
     mid.appendString("-99999999999999999999999999999999999999");
     assert(mid.getString(0) == "-99999999999999999999999999999999999999");
     assertThrown!ClientException(mid.appendString("100000000000000000000000000000000000000"));
+    assertThrown!ClientException(mid.appendString("-100000000000000000000000000000000000000"));
+    assertThrown!ClientException(c.appendString("-10000000")); // the negative limit, also for 32-bit storage
+    c.appendString("-9999999.99");
+    assert(c.data[$ - 1] == -999_999_999);
 
     assertThrown!ClientException(new Decimal32Column("x", "Decimal(10, 2)", 10, 2));
     assertThrown!ClientException(new Decimal64Column("x", "Decimal(5, 6)", 5, 6));

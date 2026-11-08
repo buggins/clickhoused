@@ -16,6 +16,7 @@ module clickhoused.types.variant;
 import core.time : Duration;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
+import std.meta : AliasSeq;
 import std.uuid : UUID;
 import std.variant : Variant;
 
@@ -331,6 +332,16 @@ final class VariantColumn : Column
         other
     }
 
+    // A list of kinds as a static array, so that appends don't allocate one each time
+    private template kinds(K...)
+    {
+        static immutable Kind[] kinds = [K];
+    }
+
+    // Every kind but text, in order of preference for values that aren't text
+    private alias nonTextKinds = AliasSeq!(Kind.integer, Kind.floating, Kind.decimal, Kind.boolean, Kind.date,
+            Kind.dateTime, Kind.uuid, Kind.time, Kind.other);
+
     private static Kind kindOf(const Column column) @safe pure
     {
         import std.algorithm.searching : startsWith;
@@ -385,7 +396,7 @@ final class VariantColumn : Column
             return true;
         }
 
-        auto tried = new bool[variants.length];
+        bool[256] tried; // more than the 255 alternatives a Variant can have
         foreach (kind; kinds)
             foreach (i, v; variants)
                 if (!tried[i] && kindOf(v) == kind)
@@ -409,43 +420,38 @@ final class VariantColumn : Column
     +/
     void appendToAny(scope void delegate(Column) @safe append) @safe
     {
-        static immutable Kind[] nonText = [
-            Kind.integer, Kind.floating, Kind.decimal, Kind.boolean, Kind.date, Kind.dateTime,
-            Kind.uuid,
-            Kind.time, Kind.other
-        ];
-        if (!appendFirst(nonText ~ Kind.text, false, append))
+        if (!appendFirst(kinds!(nonTextKinds, Kind.text), false, append))
             throw new ClientException("Column '" ~ name ~ "' (" ~ typeName ~ "): no alternative accepts the value");
     }
 
     override void appendLong(long value) @safe
     {
-        if (!appendFirst([Kind.integer, Kind.decimal, Kind.floating], false, (c) => c.appendLong(value)))
+        if (!appendFirst(kinds!(Kind.integer, Kind.decimal, Kind.floating), false, (c) => c.appendLong(value)))
             throw appendError("long", value);
     }
 
     override void appendUlong(ulong value) @safe
     {
-        if (!appendFirst([Kind.integer, Kind.decimal, Kind.floating], false, (c) => c.appendUlong(value)))
+        if (!appendFirst(kinds!(Kind.integer, Kind.decimal, Kind.floating), false, (c) => c.appendUlong(value)))
             throw appendError("ulong", value);
     }
 
     override void appendDouble(double value) @safe
     {
-        if (!appendFirst([Kind.floating, Kind.decimal, Kind.integer], false, (c) => c.appendDouble(value)))
+        if (!appendFirst(kinds!(Kind.floating, Kind.decimal, Kind.integer), false, (c) => c.appendDouble(value)))
             throw appendError("double", value);
     }
 
     override void appendBool(bool value) @safe
     {
-        if (!appendFirst([Kind.boolean, Kind.integer], false, (c) => c.appendBool(value)))
+        if (!appendFirst(kinds!(Kind.boolean, Kind.integer), false, (c) => c.appendBool(value)))
             throw appendError("bool", value);
     }
 
     /// Appends to a string alternative, else to the first alternative that parses `value`.
     override void appendString(string value) @safe
     {
-        if (!appendFirst([Kind.text], true, (c) => c.appendString(value)))
+        if (!appendFirst(kinds!(Kind.text), true, (c) => c.appendString(value)))
             throw appendError("string", value);
     }
 
@@ -455,42 +461,37 @@ final class VariantColumn : Column
     +/
     package(clickhoused) void appendTextElement(string text, bool quoted) @safe
     {
-        static immutable Kind[] nonText = [
-            Kind.integer, Kind.floating, Kind.decimal, Kind.boolean, Kind.date, Kind.dateTime,
-            Kind.uuid,
-            Kind.time, Kind.other
-        ];
-        if (!appendFirst(quoted ? [Kind.text] : nonText, true, (c) => c.appendString(text)))
+        if (!appendFirst(quoted ? kinds!(Kind.text) : kinds!nonTextKinds, true, (c) => c.appendString(text)))
             throw appendError("string", text);
     }
 
     override void appendBytes(const(ubyte)[] value) @safe
     {
-        if (!appendFirst([Kind.text], false, (c) => c.appendBytes(value)))
+        if (!appendFirst(kinds!(Kind.text), false, (c) => c.appendBytes(value)))
             throw appendError("bytes", value.length);
     }
 
     override void appendDate(Date value) @safe
     {
-        if (!appendFirst([Kind.date, Kind.dateTime], false, (c) => c.appendDate(value)))
+        if (!appendFirst(kinds!(Kind.date, Kind.dateTime), false, (c) => c.appendDate(value)))
             throw appendError("Date", value);
     }
 
     override void appendSysTime(SysTime value) @safe
     {
-        if (!appendFirst([Kind.dateTime], false, (c) => c.appendSysTime(value)))
+        if (!appendFirst(kinds!(Kind.dateTime), false, (c) => c.appendSysTime(value)))
             throw appendError("SysTime", value);
     }
 
     override void appendUUID(UUID value) @safe
     {
-        if (!appendFirst([Kind.uuid], false, (c) => c.appendUUID(value)))
+        if (!appendFirst(kinds!(Kind.uuid), false, (c) => c.appendUUID(value)))
             throw appendError("UUID", value);
     }
 
     override void appendDuration(Duration value) @safe
     {
-        if (!appendFirst([Kind.time], false, (c) => c.appendDuration(value)))
+        if (!appendFirst(kinds!(Kind.time), false, (c) => c.appendDuration(value)))
             throw appendError("Duration", value);
     }
 

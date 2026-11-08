@@ -104,6 +104,12 @@ final class LowCardinalityColumn : Column
             const count = reader.readFixed!ulong();
             if (count == 0 || count > rows - values.length)
                 throw new ProtocolException("Column '" ~ name ~ "': wrong LowCardinality row count");
+            // Strings, the common case, are copied directly; other types through appendFrom,
+            // which checks the column type on every call
+            // (two casts: LDC 1.43 has an internal error on a cast of `nullable is null ? a : b`)
+            auto stringValues = nullable is null ? cast(StringColumn) values : cast(StringColumn) nullable.nested;
+            auto stringKeys = cast(StringColumn) keys;
+            const direct = stringValues !is null && stringKeys !is null;
             ulong[] chunk;
             for (size_t done = 0; done < count;)
             {
@@ -114,7 +120,13 @@ final class LowCardinalityColumn : Column
                 {
                     if (index >= keyCount)
                         throw new ProtocolException("Column '" ~ name ~ "': LowCardinality index out of range");
-                    if (nullable is null)
+                    if (direct && (nullable is null || index != 0))
+                    {
+                        stringValues.appendString(stringKeys.data[cast(size_t) index]);
+                        if (nullable !is null)
+                            nullable.appendFlag(false);
+                    }
+                    else if (nullable is null)
                         values.appendFrom(keys, cast(size_t) index);
                     else if (index == 0) // stands for NULL
                         nullable.appendNull();

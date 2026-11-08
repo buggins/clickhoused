@@ -136,8 +136,9 @@ final class Connection : Poolable
         import clickhoused : clickhousedVersionMajor, clickhousedVersionMinor, clickhousedVersionPatch;
 
         this.options = options;
+        // The user and host name go with every query: looked up once
         identity = ClientIdentity(options.clientName, clickhousedVersionMajor, clickhousedVersionMinor,
-                clickhousedVersionPatch);
+                clickhousedVersionPatch, localOsUser(), localHostName());
         connect();
     }
 
