@@ -118,12 +118,11 @@ struct PooledConnection
 
     @disable this(this);
 
-    private this(PoolLease lease) @trusted
+    private this(PoolLease lease) @safe
     {
         import std.algorithm.mutation : move;
 
-        // the pool's factory only creates Connections
-        conn = cast(Connection) lease.connection();
+        conn = cast(Connection) lease.connection(); // a checked cast: the pool's factory only creates Connections
         this.lease = move(lease);
     }
 

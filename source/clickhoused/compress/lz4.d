@@ -187,7 +187,10 @@ Pointer code, for speed: reads stay within `src` (the match search stops
 +/
 size_t compressBlock(scope const(ubyte)[] src, scope ubyte[] dst) @trusted pure nothrow @nogc
 {
-    assert(dst.length >= lz4CompressBound(src.length));
+    // The safety of the pointer code rests on this: a check that stays in -release builds
+    // (assert(0) halts there, while other asserts are removed)
+    if (dst.length < lz4CompressBound(src.length))
+        assert(0, "compressBlock: dst is smaller than lz4CompressBound(src.length)");
     const(ubyte)* base = src.ptr;
     const(ubyte)* anchor = base;
     ubyte* op = dst.ptr;

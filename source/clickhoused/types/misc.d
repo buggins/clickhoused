@@ -47,7 +47,7 @@ final class UUIDColumn : Column
         {
             const start = data.length;
             data = growUninitialized(data, growRows(start, rows));
-            auto bytes = bytesOf(data[start .. $]); // a UUID is its 16 bytes
+            auto bytes = writableBytesOf(data[start .. $]); // a UUID is its 16 bytes
             reader.readExact(bytes);
             reverseHalves(bytes);
         }
@@ -133,7 +133,9 @@ final class UUIDColumn : Column
         import core.stdc.string : memcpy;
 
         assert(bytes.length % 8 == 0);
-        for (size_t i = 0; i < bytes.length; i += 8) // within `bytes`: its length is a multiple of 8
+        // Trusted for speed (a @safe version with std.bitmanip was 18 times slower): the loop
+        // condition keeps every 8-byte copy within `bytes`, whatever its length
+        for (size_t i = 0; i + 8 <= bytes.length; i += 8)
         {
             ulong v = void;
             memcpy(&v, bytes.ptr + i, 8);

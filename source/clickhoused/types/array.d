@@ -126,12 +126,14 @@ final class ArrayColumn : Column
     }
 
     /// A `Variant` holding a `Variant[]` with the element values (see `Column.getVariant`).
-    override Variant getVariant(size_t row) const @trusted
+    override Variant getVariant(size_t row) const @safe
     {
-        // Copying Variants is memory-safe, but std.variant is not annotated @safe
         Variant[] values;
         foreach (i; rowStart(row) .. rowEnd(row))
-            values ~= elements.getVariant(i);
+        {
+            auto value = elements.getVariant(i);
+            (() @trusted => values ~= value)(); // Variant's copy isn't marked @safe; it holds a column's value
+        }
         return makeVariant(values);
     }
 

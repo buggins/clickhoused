@@ -628,6 +628,8 @@ final class DynamicColumn : Column
     // appendFrom copies the value with its type; truncate keeps the types
     auto copy = cast(DynamicColumn) createColumn("d", "Dynamic");
     copy.appendFrom(d, 4);
-    copy.appendFrom((cast(clickhoused.types.array.ArrayColumn) a).elements, 2);
+    import clickhoused.types.array : ArrayColumn;
+
+    copy.appendFrom((cast(ArrayColumn) a).elements, 2);
     assert(copy.dynamicTypeName(0) == "Date32" && copy.isNull(1));
 }

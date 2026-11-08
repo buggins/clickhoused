@@ -15,6 +15,7 @@ module clickhoused.types.column;
 import core.time : Duration;
 import std.datetime.date : Date;
 import std.datetime.systime : SysTime;
+import std.traits : hasElaborateCopyConstructor, hasElaborateDestructor;
 import std.uuid : UUID;
 import std.variant : Variant;
 
@@ -50,13 +51,65 @@ package T[] growUninitialized(T)(T[] data, size_t length) @safe pure nothrow
     return grown;
 }
 
-/// The bytes of `values`, for types whose memory is their wire format (fixed-width numbers, `bool`, `UUID`).
-package inout(ubyte)[] bytesOf(T)(inout(T)[] values) @trusted pure nothrow @nogc
+/// The bytes of `values`, read-only, for types whose memory is their wire format (fixed-width numbers,
+/// `bool`, `UUID`).
+package const(ubyte)[] bytesOf(T)(const(T)[] values) @trusted pure nothrow @nogc
 {
     import std.traits : hasIndirections;
 
     static assert(!hasIndirections!T, T.stringof ~ " has indirections");
-    return cast(inout(ubyte)[]) values; // plain bytes of plain values: no pointers involved
+    return cast(const(ubyte)[]) values; // plain bytes of plain values: no pointers involved
+}
+
+/++
+The bytes of `values`, to be written: only for types where any bytes make a
+valid value (`anyBytesValid`). Not for `bool`, which must hold 0 or 1 (see
+`readFlags`), nor enums.
++/
+package ubyte[] writableBytesOf(T)(T[] values) @trusted pure nothrow @nogc
+{
+    static assert(anyBytesValid!T, T.stringof ~ " can't take arbitrary bytes");
+    return cast(ubyte[]) values; // values without pointers, valid for any bytes
+}
+
+/// Whether any bytes make a valid `T`: integers, floating-point numbers, characters, and
+/// static arrays and structs of only those (no `bool`, enum, pointer or slice).
+package template anyBytesValid(T)
+{
+    import std.meta : allSatisfy;
+    import std.traits : isFloatingPoint, isIntegral, isSomeChar, isStaticArray, Unqual;
+
+    alias U = Unqual!T;
+    static if (is(U == enum) || is(U == bool))
+        enum anyBytesValid = false;
+    else static if (isIntegral!U || isFloatingPoint!U || isSomeChar!U)
+        enum anyBytesValid = true;
+    else static if (isStaticArray!U)
+        enum anyBytesValid = anyBytesValid!(typeof(U.init[0]));
+    else static if (is(U == struct))
+        enum anyBytesValid = allSatisfy!(.anyBytesValid, typeof(U.tupleof));
+    else
+        enum anyBytesValid = false;
+}
+
+@safe pure nothrow @nogc unittest
+{
+    import clickhoused.types.wideint : Int256;
+    import std.uuid : UUID;
+
+    static struct Flagged
+    {
+        int x;
+        bool flag;
+    }
+
+    enum Color : ubyte
+    {
+        red
+    }
+
+    static assert(anyBytesValid!uint && anyBytesValid!double && anyBytesValid!UUID && anyBytesValid!Int256);
+    static assert(!anyBytesValid!bool && !anyBytesValid!Color && !anyBytesValid!Flagged && !anyBytesValid!(int*));
 }
 
 /++
@@ -66,17 +119,16 @@ or 1.
 +/
 package bool[] readFlags(BufferedReader reader, size_t rows) @safe
 {
-    bool[] flags;
-    while (flags.length < rows)
+    ubyte[] bytes;
+    while (bytes.length < rows)
     {
-        const start = flags.length;
-        flags = growUninitialized(flags, growRows(start, rows));
-        auto bytes = bytesOf(flags[start .. $]);
-        reader.readExact(bytes);
-        foreach (ref b; bytes)
+        const start = bytes.length;
+        bytes = growUninitialized(bytes, growRows(start, rows));
+        reader.readExact(bytes[start .. $]);
+        foreach (ref b; bytes[start .. $])
             b = b != 0;
     }
-    return flags;
+    return (() @trusted => cast(bool[]) bytes)(); // every byte is 0 or 1 now: valid bools
 }
 
 /++
@@ -447,7 +499,7 @@ abstract class FixedColumn(T) : Column if (isFixedWireType!T)
 package void readFixedValues(T)(BufferedReader reader, T[] values) @safe
 {
     version (LittleEndian)
-        reader.readExact((() @trusted => cast(ubyte[]) values)()); // same memory layout as the wire
+        reader.readExact(writableBytesOf(values)); // same memory layout as the wire
     else
     {
         foreach (ref v; values)
@@ -459,7 +511,7 @@ package void readFixedValues(T)(BufferedReader reader, T[] values) @safe
 package void writeFixedValues(T)(BufferedWriter writer, const(T)[] values) @safe
 {
     version (LittleEndian)
-        writer.writeBytes((() @trusted => cast(const(ubyte)[]) values)()); // same memory layout as the wire
+        writer.writeBytes(bytesOf(values)); // same memory layout as the wire
     else
     {
         foreach (v; values)
@@ -522,7 +574,10 @@ package string quoteText(scope const(char)[] text) @safe pure
 /// Wraps a copy of `value` in a `Variant`, without type qualifiers, so that
 /// `get!int` works for values read from a `const` column. Constructing a
 /// Variant from a value is memory-safe, but `std.variant` is not annotated `@safe`.
+/// Only for types whose copy and destruction are plain (the attribute would hide
+/// a `@system` copy constructor or destructor of `T`).
 package Variant makeVariant(T)(T value) @trusted
+        if (!hasElaborateCopyConstructor!T && !hasElaborateDestructor!T)
 {
     import std.traits : Unqual;
 

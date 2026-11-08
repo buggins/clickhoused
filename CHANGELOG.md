@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The project follows [Se
 ## Unreleased
 
 ### Changed
+- `ConnectionOptions` (#71):
+  - `yield_between_blocks` also accepts `1`/`0` like the other flags, in any case as before;
+  - `zstdLevel` (`zstd_level`) must be 1 to 22, checked when connecting;
+  - a `Connection` keeps its own copy of `settings`, so later changes to the caller's array don't reach it.
+- `appendVariant` takes the `Variant` by `ref const` and is `@safe` (#71); an overload for temporaries remains.
+- `zstdCompress` failures are a `ClientException` (a local failure), no longer a `ProtocolException` (#71).
+- An exception thrown by `onProgress`, `onProfileEvents` or `onLog` closes the connection; this is now documented (#71).
 - dbwire 0.9 (`~>0.9.0`, #67). It brings:
   - faster charset conversions;
   - fewer allocations in `Decimal.toString` (`DecimalColumn.getString`) and none in `Decimal.toHash`;
@@ -21,6 +28,8 @@ All notable changes to this project are documented here. The project follows [Se
   - `FixedString(N)` up to the server's `N` limit (16 MB).
 
 ### Fixed
+- `Connection.insert(table, block)`: when the block is refused and ending the insert fails as well, the block's error is reported first, with the second one chained to it (#71).
+- Builds with `-preview=dip1000` (#71; checked in CI with dmd-latest and ldc-latest).
 - **Crashes from server data (#69):**
   - deep type names, nested exceptions and deeply nested JSON overflowed the stack;
   - `LowCardinality(Nullable)` without an argument threw a `RangeError`;

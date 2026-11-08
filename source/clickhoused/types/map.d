@@ -125,9 +125,8 @@ final class MapColumn : Column
     }
 
     /// A `Variant` holding a `Variant[][]`: `[key, value]` for each entry, in order.
-    override Variant getVariant(size_t row) const @trusted
+    override Variant getVariant(size_t row) const @safe
     {
-        // Copying Variants is memory-safe, but std.variant is not annotated @safe
         Variant[][] pairs;
         foreach (i; rowStart(row) .. rowEnd(row))
             pairs ~= [keys.getVariant(i), values.getVariant(i)];

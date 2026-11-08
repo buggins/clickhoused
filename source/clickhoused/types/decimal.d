@@ -19,7 +19,8 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : appendFast, Column, growRows, growUninitialized, makeVariant;
+import clickhoused.types.column : appendFast, bytesOf, Column, growRows, growUninitialized, makeVariant,
+    writableBytesOf;
 import clickhoused.types.wideint : Int128, Int256;
 
 /// Largest precision (and scale) of a ClickHouse decimal.
@@ -78,7 +79,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
             const start = data.length;
             data = growUninitialized(data, growRows(start, rows)); // overwritten right away: not zeroed
             version (LittleEndian)
-                reader.readExact((() @trusted => cast(ubyte[]) data[start .. $])()); // same layout as the wire
+                reader.readExact(writableBytesOf(data[start .. $])); // same layout as the wire
             else
             {
                 foreach (ref v; data[start .. $])
@@ -96,7 +97,7 @@ final class DecimalColumn(T) : Column if (is(T == int) || is(T == long) || is(T 
     override void writeData(BufferedWriter writer) const @safe
     {
         version (LittleEndian)
-            writer.writeBytes((() @trusted => cast(const(ubyte)[]) data)()); // same layout as the wire
+            writer.writeBytes(bytesOf(data)); // same layout as the wire
         else
         {
             foreach (v; data)

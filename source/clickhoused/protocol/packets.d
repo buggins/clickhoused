@@ -323,7 +323,7 @@ private void writeClientInfo(BufferedWriter w, ulong revision, const ClientIdent
 
 /// Formats a query parameter value as a quoted SQL string literal, the form
 /// the server unquotes when reading parameters.
-private string quoteParameter(string value) @safe pure
+private string quoteParameter(string value) @safe pure nothrow
 {
     string s = "'";
     foreach (char c; value)

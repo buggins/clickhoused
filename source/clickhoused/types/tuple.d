@@ -159,12 +159,14 @@ final class TupleColumn : Column
     }
 
     /// A `Variant` holding a `Variant[]` with the element values.
-    override Variant getVariant(size_t row) const @trusted
+    override Variant getVariant(size_t row) const @safe
     {
-        // Copying Variants is memory-safe, but std.variant is not annotated @safe
         Variant[] values;
         foreach (e; elements)
-            values ~= e.getVariant(row);
+        {
+            auto value = e.getVariant(row);
+            (() @trusted => values ~= value)(); // Variant's copy isn't marked @safe; it holds a column's value
+        }
         return makeVariant(values);
     }
 

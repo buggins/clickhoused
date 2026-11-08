@@ -52,6 +52,11 @@ jobs:
       - name: Unit tests
         # (the TLS unit tests are in dbwire; TLS is tested here by the integration suite)
         run: dub test
+      - name: Unit tests with -preview=dip1000
+        if: matrix.os == 'ubuntu-22.04' && (matrix.dc == 'ldc-latest' || matrix.dc == 'dmd-latest')
+        env:
+          DFLAGS: -preview=dip1000 -unittest -g
+        run: dub test
       - name: Integration tests (threads)
         run: dub run :integration-tests-phobos
       - name: Integration tests (vibe.d fibers)

@@ -550,24 +550,24 @@ package struct FastField(F)
     import clickhoused.types.string : StringColumn;
 
     private alias U = Unqual!F;
-    static if (isIntegral!U || isFloatingPoint!U)
+    static if ((isIntegral!U || isFloatingPoint!U) && !is(U == enum)) // enums are stored by name
     {
-        private NumericColumn!U column;
+            private NumericColumn!U column;
 
-        bool bind(Column c) @safe pure nothrow
-        {
-            column = cast(NumericColumn!U) c;
-            return column !is null;
-        }
+            bool bind(Column c) @safe pure nothrow
+            {
+                column = cast(NumericColumn!U) c;
+                return column !is null;
+            }
 
-        bool read(size_t row, ref F target) @safe
-        {
-            if (column is null)
-                return false;
-            target = column.data[row];
-            return true;
+            bool read(size_t row, ref F target) @safe
+            {
+                if (column is null)
+                    return false;
+                target = column.data[row];
+                return true;
+            }
         }
-    }
     else static if (is(U == bool) || is(U == string) || is(U == UUID))
     {
         static if (is(U == bool))
@@ -688,22 +688,29 @@ empty `Variant` as NULL, integers, floating-point numbers, `bool`, strings,
 
 Throws: `ClientException` for other held types.
 +/
-void appendVariant(Column column, Variant value) @trusted
+void appendVariant(Column column, ref const Variant value) @safe // by reference: Variant's copy isn't @safe
 {
-    // std.variant is not annotated @safe; peeking at a held value is memory-safe
     if (!value.hasValue)
         return column.appendNull();
     static foreach (V; AliasSeq!(long, int, short, byte, ulong, uint, ushort, ubyte, double, float, bool, string,
-            const(char)[], Date, SysTime, UUID, Duration, TimeOfDay, JSONValue))
-        if (auto p = value.peek!V)
+            const(char)[], Date, SysTime, UUID, Duration, TimeOfDay, JSONValue)) // peek isn't marked @safe: it returns the address of the value held inside `value`
+        if (auto p = (()@trusted => value.peek!V)())
             return appendValue(column, *p);
     throw new ClientException("Cannot store a Variant holding " ~ value.type.toString() ~ " in column '"
             ~ column.name ~ "' (" ~ column.typeName ~ ")");
 }
 
+/// ditto
+void appendVariant(Column column, const Variant value) @safe
+{
+    appendVariant(column, value); // for temporaries; `value` is an lvalue here
+}
+
 /// Appends `value` to `column` using the appender for its D type.
 void appendValue(T)(Column column, auto ref T value) @safe
 {
+    // Explicitly @safe, unlike most templates: it calls itself through lambdas, and inference
+    // gives up on such recursion (the lambdas would be @system)
     import std.conv : to;
     import std.traits : Unqual;
 
@@ -725,7 +732,9 @@ void appendValue(T)(Column column, auto ref T value) @safe
     static if (is(U == typeof(null)))
         column.appendNull();
     else static if (is(U == Variant))
-        (() @trusted => appendVariant(column, value))(); // copying a Variant is memory-safe
+    {
+        appendVariant(column, value); // by reference: no Variant copy
+    }
     else static if (is(U : Nullable!V, V))
     {
         if (value.isNull)
@@ -1537,4 +1546,19 @@ private string columnList(Block block) @safe
     auto c = createColumn("c", "UInt8");
     appendValue(c, 5);
     assert(c.getLong(0) == 5 && quoteIdentifier("a") == "`a`");
+}
+
+unittest
+{
+    import clickhoused.types.numeric : Int64Column;
+
+    // A const Variant goes by reference (its copy isn't @safe); a temporary through the by-value overload
+    auto c = new Int64Column("x", "Int64");
+    const Variant held = Variant(5L);
+    appendValue(c, held);
+    appendVariant(c, Variant(6L));
+    assert(c.data == [5, 6]);
+    import std.exception : assertThrown;
+
+    assertThrown!ClientException(appendVariant(c, Variant.init)); // empty: NULL, which Int64 refuses
 }
