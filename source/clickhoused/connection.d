@@ -26,7 +26,7 @@ import clickhoused.exception;
 import clickhoused.insert : Inserter;
 import clickhoused.literal : quoteIdentifier;
 import clickhoused.mapping : RowRange;
-import clickhoused.io.backend : IoBackend, backendFor;
+import clickhoused.io.backend : IoBackend, IoLock, backendFor;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter, readString, readUVarInt, writeString, writeUVarInt;
 import clickhoused.io.tls : TlsContext, TlsTransport;
 import clickhoused.io.transport : Transport;
@@ -78,6 +78,19 @@ final class Connection : Poolable
     package Transport transport;
     /// An `Inserter` is sending data; `cancel` must not write then.
     package bool insertActive;
+    // What cancel() may do now: changed and read under cancelLock, so that a cancel from
+    // another thread never gets into one of the client's packets, and never reaches the
+    // server after the next query has started.
+    private enum QueryPhase
+    {
+        none, // no query: cancel does nothing
+        writing, // the client is writing a query (or a packet during its result): a cancel waits
+        reading, // the client is reading a result: a cancel is written at once
+    }
+
+    private QueryPhase queryPhase;
+    private bool cancelPending; // cancel() was called while writing
+    private IoLock cancelLock;
     package BufferedReader reader;
     package BufferedWriter writer;
     /// Readers and writers for the data part of Data packets: the same as
@@ -188,27 +201,89 @@ final class Connection : Poolable
     reading it further returns the blocks already in flight, then finishes.
 
     This is the one method that may be called from another thread (thread mode)
-    or another task on the same thread (fiber mode) while a query result is
-    being read. It does nothing if no query is running.
+    or another task on the same thread (fiber mode) while a query runs. A cancel
+    made while the query is still being sent goes out right after it. It does
+    nothing if no query is running.
 
     Throws: `ClientException` during an INSERT (use `Inserter.abort`);
     `ConnectionException` if the request cannot be sent.
     +/
     void cancel() @safe
     {
-        if (state != State.busy)
-            return;
-        if (insertActive)
-            throw new ClientException("Cannot cancel an INSERT: use Inserter.abort");
-        // The Cancel packet is the single byte 0x03. It goes straight to the transport,
-        // bypassing the buffered writer, which is idle while a result is being read.
+        cancelLock.lock();
+        scope (exit)
+            cancelLock.unlock();
+        final switch (queryPhase)
+        {
+        case QueryPhase.reading:
+            writeCancel();
+            break;
+        case QueryPhase.writing:
+            cancelPending = true; // sent by endWriting
+            break;
+        case QueryPhase.none:
+            if (insertActive)
+                throw new ClientException("Cannot cancel an INSERT: use Inserter.abort");
+            break;
+        }
+    }
+
+    // The Cancel packet is the single byte 0x03. It goes straight to the transport, bypassing
+    // the buffered writer, which is idle then. Called with cancelLock held.
+    private void writeCancel() @safe
+    {
         static immutable ubyte[1] packet = [cast(ubyte) ClientPacket.cancel];
         transport.write(packet[]);
+    }
+
+    /// Starts writing a query, or a packet while its result is read: a cancel waits until `endWriting`.
+    package void beginWriting() @safe
+    {
+        cancelLock.lock();
+        scope (exit)
+            cancelLock.unlock();
+        queryPhase = QueryPhase.writing;
+    }
+
+    /// The writing is over and the result is read: sends a cancel requested meanwhile.
+    package void endWriting() @safe
+    {
+        cancelLock.lock();
+        scope (exit)
+            cancelLock.unlock();
+        if (cancelPending)
+            writeCancel();
+        cancelPending = false;
+        queryPhase = QueryPhase.reading;
+    }
+
+    /// The query is over: nothing left to cancel.
+    package void endQuery() @safe nothrow
+    {
+        void reset() @safe nothrow
+        {
+            queryPhase = QueryPhase.none;
+            cancelPending = false;
+        }
+
+        if (cancelLock is null)
+            return reset();
+        try
+        {
+            cancelLock.lock();
+            scope (exit)
+                cancelLock.unlock();
+            reset();
+        }
+        catch (Exception)
+            reset(); // the lock failed (the backends' locks don't throw); nothing can be cancelled anyway
     }
 
     /// Closes the connection. Calling it more than once is allowed.
     void close() @safe nothrow
     {
+        endQuery();
+        insertActive = false;
         if (transport !is null)
             transport.close();
         state = State.closed;
@@ -223,6 +298,10 @@ final class Connection : Poolable
     void ping() @safe
     {
         checkReady();
+        state = State.busy; // before any I/O: another task must not start a query meanwhile
+        scope (exit)
+            if (state == State.busy)
+                state = State.ready; // also after a server error; guarded closes on others
         guarded({
             writePing(writer);
             writer.flush();
@@ -265,12 +344,14 @@ final class Connection : Poolable
     {
         checkReady();
         const allSettings = mergedSettings(settings);
+        state = State.busy; // before any I/O: writing may let another task run (fiber mode)
         guarded({
+            beginWriting();
             writeQuery(writer, effectiveRevision, identity, queryId, sql, compressionEnabled, allSettings,
                 parameters, options.quotaKey);
             writeEndOfData(); // no external tables
+            endWriting();
         });
-        state = State.busy;
         return new QueryResult(this);
     }
 
@@ -300,12 +381,13 @@ final class Connection : Poolable
     {
         checkReady();
         const allSettings = mergedSettings(settings);
+        state = State.busy; // before any I/O: writing may let another task run (fiber mode)
+        insertActive = true;
         guarded({
             writeQuery(writer, effectiveRevision, identity, null, insertQuery, compressionEnabled, allSettings,
                 null, options.quotaKey);
             writeEndOfData(); // no external tables
         });
-        state = State.busy;
         return new Inserter(this);
     }
 
@@ -536,6 +618,7 @@ final class Connection : Poolable
             throw new ClientException("ZSTD compression is not compiled in: build clickhoused with the 'zstd' "
                     ~ "configuration, or use Compression.lz4");
         backend = backendFor(options.ioMode);
+        cancelLock = backend.newLock();
         // Loads OpenSSL and the certificates once; problems here are not host-specific
         auto tlsContext = options.secure ? TlsContext.client(options.tls) : null;
 
@@ -678,14 +761,16 @@ final class QueryResult
     /// The current block.
     @property Block front() @safe
     {
-        assert(!empty, "QueryResult.front called on an empty range");
+        if (empty) // reads the next block if needed: not in an assert, which -release removes
+            throw new ClientException("QueryResult.front called on an empty range");
         return current;
     }
 
     /// Moves to the next block.
     void popFront() @safe
     {
-        assert(!empty, "QueryResult.popFront called on an empty range");
+        if (empty)
+            throw new ClientException("QueryResult.popFront called on an empty range");
         current = null;
     }
 
@@ -705,7 +790,7 @@ final class QueryResult
         current = null;
         if (finished)
             return;
-        conn.cancel();
+        conn.cancel(); // does nothing on a connection closed by an error; fetch then finishes
         while (!finished)
         {
             current = null;
@@ -738,6 +823,11 @@ final class QueryResult
     /// Reads packets until a non-empty data block or the end of the result.
     private void fetch() @safe
     {
+        if (!conn.isOpen)
+        {
+            finished = true; // closed after an error: the rest of the result is gone
+            return;
+        }
         auto r = conn.reader;
         bool gotBlock;
         conn.guarded({
@@ -767,7 +857,9 @@ final class QueryResult
                     // cannot supply: end the insert with no rows and report it.
                     r.readString(); // table name
                     r.readString(); // columns description
+                    conn.beginWriting(); // no cancel may get into the middle of this packet
                     conn.writeEndOfData();
+                    conn.endWriting();
                     insertWithoutData = true;
                     break;
                 case ServerPacket.exception:
@@ -796,6 +888,7 @@ final class QueryResult
 
     private void finish() @safe nothrow
     {
+        conn.endQuery();
         finished = true;
         if (conn.state == Connection.State.busy)
             conn.state = Connection.State.ready;
@@ -806,6 +899,135 @@ version (unittest)
 {
     import clickhoused.protocol.testserver : ScriptedServer;
     import clickhoused.types.numeric : UInt8Column;
+
+    /// A transport that runs a hook once in the middle of a write or a read, as a yield
+    /// in fiber mode lets another task run there.
+    private final class ReentrantTransport : Transport
+    {
+        import core.time : Duration;
+        import clickhoused.io.mock : MockTransport;
+
+        MockTransport inner;
+        void delegate() @safe onWrite, onRead;
+
+        this(MockTransport inner) @safe
+        {
+            this.inner = inner;
+        }
+
+        private static void fire(ref void delegate() @safe hook) @safe
+        {
+            if (hook is null)
+                return;
+            auto h = hook;
+            hook = null;
+            h();
+        }
+
+        size_t read(scope ubyte[] buffer) @safe
+        {
+            fire(onRead);
+            return inner.read(buffer);
+        }
+
+        void write(scope const(ubyte)[] data) @safe
+        {
+            fire(onWrite);
+            inner.write(data);
+        }
+
+        bool dataAvailable() @safe
+        {
+            return inner.dataAvailable();
+        }
+
+        void close() @safe nothrow
+        {
+            inner.close();
+        }
+
+        bool connected() const @safe nothrow
+        {
+            return inner.connected();
+        }
+
+        void setTimeouts(Duration receive, Duration send) @safe
+        {
+            inner.setTimeouts(receive, send);
+        }
+    }
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+
+    // The connection is busy from the first byte a query or ping writes until it is over
+    auto s = new ScriptedServer;
+    s.hello();
+    s.send();
+    auto t = new ReentrantTransport(s.transport);
+    ConnectionOptions options;
+    options.transportFactory = (host, port, timeout) => cast(Transport) t;
+    auto conn = new Connection(options);
+
+    t.onWrite = () { assertThrown!ClientException(conn.query("SELECT 2")); };
+    s.dataBlock([1]);
+    s.endOfStream();
+    s.send();
+    auto result = conn.query("SELECT 1");
+    assert(t.onWrite is null); // the hook ran
+    result.drain();
+
+    s.w.writeUVarInt(ServerPacket.pong);
+    s.send();
+    t.onRead = () { assertThrown!ClientException(conn.query("SELECT 2")); };
+    conn.ping();
+    assert(t.onRead is null && !conn.isBusy);
+
+    // A cancel made while the query is being written goes out right after it, not inside it
+    s.dataBlock([1]);
+    s.endOfStream();
+    s.send();
+    s.transport.clearWritten();
+    t.onWrite = () { conn.cancel(); };
+    result = conn.query("SELECT 1");
+    assert(t.onWrite is null && s.transport.written[$ - 1] == ClientPacket.cancel);
+    auto sent = s.clientOutput();
+    assert(sent.readUVarInt() == ClientPacket.query); // the query packet is intact
+    result.drain();
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+
+    // cancel() writes only while a result is being read
+    auto s = new ScriptedServer;
+    s.hello();
+    auto conn = s.connect();
+    conn.cancel(); // idle: nothing to cancel
+    assert(s.transport.written.length == 0);
+
+    s.dataBlock([1]);
+    s.endOfStream();
+    s.send();
+    auto result = conn.query("SELECT 1");
+    s.transport.clearWritten();
+    conn.cancel();
+    assert(s.transport.written == [cast(ubyte) ClientPacket.cancel]);
+    result.drain();
+    s.transport.clearWritten();
+    conn.cancel(); // the result is over: a late cancel is not sent
+    assert(s.transport.written.length == 0);
+
+    s.tableColumns();
+    s.dataBlock([]); // the INSERT's header
+    s.send();
+    auto ins = conn.beginInsert("INSERT INTO t VALUES");
+    assertThrown!ClientException(conn.cancel());
+    ins.abort();
+    conn.cancel(); // the insert is over (and the connection closed): nothing to refuse
 }
 
 @safe unittest
@@ -899,6 +1121,11 @@ version (unittest)
     assertThrown!ConnectionException(result.empty);
     assert(!conn.isOpen);
     assertThrown!ClientException(conn.query("SELECT 1"));
+    result.close(); // cleanup code still works after the error
+    result.drain();
+    conn.cancel(); // nothing to cancel on a closed connection
+    assert(result.empty);
+    assertThrown!ClientException(result.front); // not an assert: also checked with -release
 }
 
 @safe unittest

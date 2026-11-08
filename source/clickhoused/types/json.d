@@ -14,11 +14,41 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types.json;
 
+import std.json : JSONValue;
 import std.variant : Variant;
 
 import clickhoused.exception : ClientException, ProtocolException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter, readString, writeString;
 import clickhoused.types.column : appendFast, Column, growRows, makeVariant;
+
+/++
+The `maxDepth` that JSON text is parsed with: `std.json` then accepts 1001
+nested objects and arrays, as ClickHouse 26.11 does (checked). Deeper text is
+rejected instead of parsed, which would overflow the stack.
++/
+enum int maxJsonDepth = 1000;
+
+/++
+Parses JSON text into `parsed` with the `maxJsonDepth` limit. Returns false, with the reason
+in `error`, if the text is not valid JSON, is nested too deeply, or has a
+number that doesn't fit (std.json then throws `ConvException`, not `JSONException`).
++/
+package(clickhoused) bool tryParseJson(string text, out JSONValue parsed, out string error) @safe
+{
+    import std.conv : ConvException;
+    import std.json : JSONException, parseJSON;
+
+    try
+    {
+        parsed = parseJSON(text, maxJsonDepth);
+        return true;
+    }
+    catch (JSONException e)
+        error = e.msg;
+    catch (ConvException e)
+        error = e.msg;
+    return false;
+}
 
 /++
 `JSON` column: one JSON text per row, as the server writes it (`toString(j)`:
@@ -146,20 +176,13 @@ final class JsonColumn : Column
     +/
     override void appendString(string value) @safe
     {
-        import std.json : JSONException, JSONType, parseJSON;
+        import std.json : JSONType;
 
-        try
-        {
-            if (parseJSON(value).type == JSONType.object)
-            {
-                appendFast(data, spare, value);
-                return;
-            }
-        }
-        catch (JSONException)
-        {
-        }
-        throw appendError("string", value);
+        JSONValue parsed;
+        string error;
+        if (!tryParseJson(value, parsed, error) || parsed.type != JSONType.object)
+            throw appendError("string", value);
+        appendFast(data, spare, value);
     }
 
     /// ditto
@@ -207,6 +230,22 @@ final class JsonColumn : Column
     foreach (bad; ["{not json", "[1, 2]", "5", ""])
         assertThrown!ClientException(j.appendString(bad), bad);
     assert(j.length == 3);
+    // Too deep (as for the server) or out of range: rejected, not a crash or another exception
+    import std.array : replicate;
+
+    j.appendString(`{"a":` ~ "[".replicate(maxJsonDepth) ~ "]".replicate(maxJsonDepth) ~ "}"); // 1001 deep
+    assertThrown!ClientException(
+            j.appendString(`{"a":` ~ "[".replicate(maxJsonDepth + 1) ~ "]".replicate(
+            maxJsonDepth + 1) ~ "}"));
+    assertThrown!ClientException(j.appendString(`{"a":` ~ "[".replicate(200_000)));
+    // 2.097's std.json reads 1e400 as infinity; newer ones throw ConvException, which must not escape
+    try
+        j.appendString(`{"a":1e400}`);
+    catch (ClientException)
+    {
+    }
+    assert(j.length == 4 || j.length == 5);
+    j.truncate(4);
     auto n = createColumn("n", "Nullable(JSON)");
     n.appendNull();
     n.appendString("{}");

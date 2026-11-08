@@ -110,6 +110,13 @@ void testStructErrors()
     assertThrown!ClientException(conn.queryValue!ubyte("SELECT 300"));
     assertThrown!ClientException(conn.queryValue!long("SELECT NULL"));
     enforce(conn.isOpen && !conn.isBusy, "state after value errors");
+    // A value that doesn't convert in the middle of a result closes the result
+    assertThrown!ClientException(conn.query!Small("SELECT if(number = 3, 300, number) AS v FROM numbers(10)").array);
+    enforce(conn.isOpen && !conn.isBusy, "state after a conversion error in query!T");
+    auto rows = conn.query!Small("SELECT 1 AS v");
+    rows.popFront();
+    assertThrown!ClientException(rows.front); // a check, also in release builds
+    enforce(!conn.isBusy, "state after an exhausted query!T");
     conn.ping();
 
     // An insert whose value does not fit is abandoned: the connection is closed

@@ -300,6 +300,10 @@ final class VariantColumn : Column
     +/
     void appendTo(size_t index, scope void delegate(Column) @safe append) @safe
     {
+        import std.conv : to;
+
+        if (index >= variants.length)
+            throw new ClientException("Column '" ~ name ~ "': no alternative " ~ index.to!string);
         auto target = variants[index];
         const before = target.length;
         append(target);
@@ -592,4 +596,15 @@ final class VariantColumn : Column
     copy.appendFrom(v, 3);
     assert(copy.getString(0) == "2.5" && copy.isNull(1));
     assertThrown!ClientException(copy.appendFrom(e, 0)); // a different Variant type
+}
+
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import clickhoused.types.factory : createColumn;
+
+    // An alternative index out of range is a ClientException, not a RangeError
+    auto v = cast(VariantColumn) createColumn("v", "Variant(String, UInt64)");
+    assertThrown!ClientException(v.appendTo(2, (c) { c.appendString("x"); }));
+    assert(v.length == 0);
 }

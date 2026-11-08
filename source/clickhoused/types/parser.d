@@ -119,9 +119,17 @@ private string quoteName(string name) @safe pure
 }
 
 /++
+Deepest nesting of types the parser accepts, e.g. `Array(Array(...))`. It keeps
+the parser, and the column factory that recurses along, from overflowing the
+stack (a fiber's in particular); real types stay far below it.
++/
+enum size_t maxTypeDepth = 100;
+
+/++
 Parses a ClickHouse type name.
 
-Throws: `ProtocolException` if `typeName` is not a valid type name.
+Throws: `ProtocolException` if `typeName` is not a valid type name or is
+nested more than `maxTypeDepth` levels deep.
 +/
 TypeNode parseType(string typeName) @safe pure
 {
@@ -179,6 +187,15 @@ TypeNode parseType(string typeName) @safe pure
         "", "(", "Nullable(", "Nullable(String", "Enum8('a' = )", "UInt8)", "1abc", "A('x"
     ])
         assertThrown!ProtocolException(parseType(bad), bad);
+
+    // Nesting is limited: deeper input is refused, not followed into a stack overflow
+    import std.array : replicate;
+
+    enum depth = maxTypeDepth - 1;
+    assert(parseType("Array(".replicate(depth) ~ "UInt8" ~ ")".replicate(depth)).name == "Array");
+    assertThrown!ProtocolException(parseType("Array(".replicate(50_000) ~ "UInt8" ~ ")".replicate(50_000)));
+    assertThrown!ProtocolException(parseType("Tuple(a ".replicate(maxTypeDepth) ~ "UInt8" ~ ")".replicate(
+            maxTypeDepth)));
 }
 
 private string quote(string s) @safe pure
@@ -197,9 +214,14 @@ private struct Parser
 {
     string input;
     size_t pos;
+    size_t nesting; // of parseNode calls
 
     TypeNode parseNode() @safe pure
     {
+        if (++nesting > maxTypeDepth)
+            fail("types nested too deeply");
+        scope (exit)
+            nesting--;
         skipSpaces();
         TypeNode node;
         node.name = parseIdentifier();

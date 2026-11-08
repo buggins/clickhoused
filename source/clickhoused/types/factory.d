@@ -75,11 +75,14 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     T[string] enumElements(T)()
     {
         T[string] elements;
+        bool[T] values;
         foreach (ref arg; type.args)
         {
-            if (arg.kind != TypeArgKind.enumValue || arg.number < T.min || arg.number > T.max)
-                throw invalid();
+            if (arg.kind != TypeArgKind.enumValue || arg.number < T.min || arg.number > T.max
+                    || arg.text in elements || cast(T) arg.number in values)
+                throw invalid(); // also a repeated label or value
             elements[arg.text] = cast(T) arg.number;
+            values[cast(T) arg.number] = true;
         }
         return elements;
     }
@@ -164,7 +167,8 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     case "String":
         return new StringColumn(name, typeName);
     case "FixedString":
-        if (type.args.length != 1 || type.args[0].kind != TypeArgKind.number || type.args[0].number <= 0)
+        if (type.args.length != 1 || type.args[0].kind != TypeArgKind.number || type.args[0].number <= 0
+                || type.args[0].number > maxFixedStringSize)
             throw invalid();
         return new FixedStringColumn(name, type.args[0].number.to!size_t, typeName);
     case "Date":
@@ -223,6 +227,7 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
                 || innerType.name == "Map" || innerType.name == "Nested" || innerType.name == "Variant"
                 || innerType.name == "Dynamic" || innerType.name == "JSON")
             throw invalid();
+        auto values = createColumn(name, innerType.toString(), innerType, defaultTimezone); // checks Nullable's argument
         // The dictionary holds the inner type without Nullable: NULL is index 0
         const keyType = innerType.name == "Nullable" ? innerType.args[0].type : innerType;
         Column newKeys() @safe
@@ -230,7 +235,6 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
             return createColumn(name, keyType.toString(), keyType, defaultTimezone);
         }
 
-        auto values = createColumn(name, innerType.toString(), innerType, defaultTimezone);
         newKeys(); // fails now, not when the first block arrives, if the key type is unsupported
         return new LowCardinalityColumn(name, typeName, values, &newKeys);
     case "Tuple":
@@ -378,6 +382,11 @@ private Column createColumn(string name, string typeName, const TypeNode type, s
     assertThrown!ProtocolException(createColumn("x", "Decimal(77, 0)"));
     assertThrown!ProtocolException(createColumn("x", "Decimal(10)"));
     assertThrown!ProtocolException(createColumn("x", "FixedString(0)"));
+    assertThrown!ProtocolException(createColumn("x", "FixedString(16777216)")); // above the server's limit
+    assertThrown!ProtocolException(createColumn("x", "FixedString(4611686018427387904)"));
+    assertThrown!ProtocolException(createColumn("x", "LowCardinality(Nullable)"));
+    assertThrown!ProtocolException(createColumn("x", "Enum8('a' = 1, 'a' = 2)"));
+    assertThrown!ProtocolException(createColumn("x", "Enum16('a' = 1, 'b' = 1)"));
     assertThrown!ProtocolException(createColumn("x", "DateTime64(10)"));
     assertThrown!ProtocolException(createColumn("x", "Enum8('a' = 200)"));
     assertThrown!ProtocolException(createColumn("x", "Nullable(Nullable(UInt8))"));
@@ -546,4 +555,20 @@ version (unittest)
         else
             assert(0, "no test data for " ~ c.typeName);
     }
+}
+
+@safe unittest
+{
+    import core.time : MonoTime, seconds;
+    import std.array : replicate;
+    import std.exception : assertThrown;
+    import clickhoused.types.parser : maxTypeDepth;
+
+    // The deepest accepted type builds quickly; deeper ones are refused
+    enum depth = maxTypeDepth - 1;
+    const start = MonoTime.currTime;
+    const deep = createColumn("x", "Array(".replicate(depth) ~ "UInt8" ~ ")".replicate(depth));
+    assert(deep.typeName.length > 5 * depth && MonoTime.currTime - start < 2.seconds);
+    assertThrown!ProtocolException(createColumn("x", "Array(".replicate(depth + 2) ~ "UInt8" ~ ")".replicate(
+            depth + 2)));
 }

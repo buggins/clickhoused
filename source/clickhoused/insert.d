@@ -90,8 +90,7 @@ final class Inserter
     /// Reads the server's reply to the INSERT query up to the header block.
     package this(Connection conn) @safe
     {
-        this.conn = conn;
-        conn.insertActive = true;
+        this.conn = conn; // beginInsert has set conn.insertActive
         auto r = conn.reader;
         bool acceptsNoData;
         conn.guarded({
@@ -163,7 +162,7 @@ final class Inserter
     the columns (the row is then not added); `ServerException` if the server
     reported an error.
     +/
-    void addRow(Args...)(Args values) @safe
+    void addRow(Args...)(Args values) // attributes inferred: Variant arguments are @system to copy
     {
         checkActive();
         if (values.length != header.columns.length)
@@ -175,7 +174,7 @@ final class Inserter
         const rows = current.rows;
         try
         {
-            foreach (i, value; values)
+            foreach (i, ref value; values)
             {
                 appendValue(current.columns[i], value);
                 currentBytes += estimateSize(value);
@@ -201,7 +200,7 @@ final class Inserter
     value does not fit (the row is then not added); `ServerException` if the
     server reported an error.
     +/
-    void addStruct(T)(auto ref const T value) @safe if (is(T == struct))
+    void addStruct(T)(auto ref const T value) if (is(T == struct)) // attributes inferred
     {
         import clickhoused.mapping : IgnoreField, columnNames;
         import std.traits : hasUDA;
@@ -524,6 +523,24 @@ version (unittest)
     assert(sent.rows == 2 && sent.columns[0].getLong(1) == 2 && sent.columns[1].isNull(1));
     assert(out_.readUVarInt() == ClientPacket.data && out_.readString() == "");
     assert(readBlock(out_, Revision.client).rows == 0); // end marker
+}
+
+unittest
+{
+    import std.variant : Variant;
+
+    // Variant values work in addRow, as documented (copying a Variant is @system)
+    auto s = new ScriptedServer;
+    s.hello();
+    auto conn = s.connect();
+    s.tableColumns();
+    s.block(ServerPacket.data, insertHeader());
+    s.send();
+    auto ins = conn.beginInsert("INSERT INTO t (x, s) VALUES");
+    ins.addRow(Variant(7), Variant("v"));
+    ins.addRow(Variant(8), Variant.init); // an empty Variant is NULL
+    assert(ins.current.rows == 2 && ins.current.columns[0].getLong(0) == 7 && ins.current.columns[1].isNull(1));
+    ins.abort();
 }
 
 @safe unittest
