@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+### Changed
+- dbwire 0.9 (`~>0.9.0`, #67). It brings:
+  - faster charset conversions;
+  - fewer allocations in `Decimal.toString` (`DecimalColumn.getString`) and none in `Decimal.toHash`;
+  - a correctly rounded `Decimal.toDouble` (`DecimalColumn.getDouble`);
+  - no leaked OpenSSL context when certificates or keys fail to load;
+  - the next host tried when a socket can't be created;
+  - builds with `-preview=dip1000`.
+- `ConnectionOptions.connectTimeout` (`connect_timeout` in a DSN): `Duration.zero` (`0`) now means no limit. It used to fail at once.
+
 ## 0.9.0 — 2026-11-07
 
 The first 0.9.x release candidate before 1.0: the API may still change in 0.9.x, and 1.0 follows once it has settled. clickhoused now builds on [dbwire](https://github.com/buggins/dbwire) 0.8, the pure-D package it shares with postgresql-native, oracle-native and mssql-native; the old module paths keep working, but two changes are breaking (`ClickHouseException` and `Decimal.scale`, below). Still no C dependencies at build time.

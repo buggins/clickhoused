@@ -97,6 +97,8 @@ void testMapInsert()
     const back = conn.queryRow!Row("SELECT * FROM map_ins WHERE id = 1");
     enforce(back.counts.length == 1 && back.counts["a"] == 1 && back.attrs.length == 2 && back.attrs[1][1].isNull,
             "struct round trip: " ~ back.to!string);
-    const literal = conn.queryValue!string("SELECT toString(" ~ formatLiteral(["k": [1, 2]]) ~ ")");
+    // in a variable: LDC 1.41.0 crashes on an associative array literal passed to formatLiteral directly
+    const int[][string] map = ["k": [1, 2]];
+    const literal = conn.queryValue!string("SELECT toString(" ~ formatLiteral(map) ~ ")");
     enforce(literal == "{'k':[1,2]}", "literal: " ~ literal);
 }
