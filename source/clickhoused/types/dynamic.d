@@ -384,11 +384,16 @@ final class DynamicColumn : Column
         import std.conv : to;
         import clickhoused.types.parser : parseType;
 
+        // A name already in the column is used as it is: only new names are parsed
+        foreach (i, v; values.variants)
+            if (v.typeName == typeName)
+                return values.appendTo(i, append);
         // The server orders the types by its canonical names, so the names must be canonical
         const canonical = typeName == sharedVariantName ? typeName : parseType(typeName).toString();
-        foreach (i, v; values.variants)
-            if (v.typeName == canonical)
-                return values.appendTo(i, append);
+        if (canonical != typeName)
+            foreach (i, v; values.variants)
+                if (v.typeName == canonical)
+                    return values.appendTo(i, append);
         if (values.variants.length >= maxTypes + (hasShared() ? 1 : 0))
             throw new ClientException("Column '" ~ name ~ "' holds the maximum of " ~ maxTypes.to!string ~ " types");
         const index = values.variants.length;

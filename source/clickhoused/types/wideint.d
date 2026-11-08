@@ -14,7 +14,7 @@ import std.variant : Variant;
 
 import clickhoused.exception : ClientException;
 import clickhoused.io.buffer : BufferedReader, BufferedWriter;
-import clickhoused.types.column : appendFast, Column, makeVariant, readChunkRows;
+import clickhoused.types.column : appendFast, Column, growRows, growUninitialized, makeVariant;
 
 /// Column of 128- or 256-bit integers (`Int128`, `UInt128`, `Int256`, `UInt256`).
 final class WideIntColumn(W) : Column if (isWideInt!W)
@@ -46,8 +46,7 @@ final class WideIntColumn(W) : Column if (isWideInt!W)
         while (data.length < rows)
         {
             const start = data.length;
-            const count = rows - start < readChunkRows ? rows - start : readChunkRows;
-            data.length = start + count;
+            data = growUninitialized(data, growRows(start, rows)); // overwritten right away: not zeroed
             version (LittleEndian)
                 reader.readExact((() @trusted => cast(ubyte[]) data[start .. $])()); // same layout as the wire
             else

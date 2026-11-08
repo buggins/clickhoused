@@ -138,10 +138,18 @@ final class TupleColumn : Column
     /// The elements in ClickHouse's text form, e.g. `(1,'a')`.
     override string getString(size_t row) const @safe
     {
-        auto s = "(";
+        import std.array : appender;
+
+        auto s = appender!string; // piece by piece: `a ~ b` would allocate a temporary for each element
+        s.put('(');
         foreach (i, e; elements)
-            s ~= (i ? "," : "") ~ e.getQuotedString(row);
-        return s ~ ")";
+        {
+            if (i)
+                s.put(',');
+            s.put(e.getQuotedString(row));
+        }
+        s.put(')');
+        return s.data;
     }
 
     /// Tuples are not quoted inside arrays.

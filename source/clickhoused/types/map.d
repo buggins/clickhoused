@@ -102,10 +102,20 @@ final class MapColumn : Column
     /// The entries in ClickHouse's text form, e.g. `{'a':1,'b':2}`.
     override string getString(size_t row) const @safe
     {
-        auto s = "{";
+        import std.array : appender;
+
+        auto s = appender!string; // piece by piece: `a ~ b` would allocate a temporary for each entry
+        s.put('{');
         foreach (i; rowStart(row) .. rowEnd(row))
-            s ~= (i > rowStart(row) ? "," : "") ~ keys.getQuotedString(i) ~ ":" ~ values.getQuotedString(i);
-        return s ~ "}";
+        {
+            if (i > rowStart(row))
+                s.put(',');
+            s.put(keys.getQuotedString(i));
+            s.put(':');
+            s.put(values.getQuotedString(i));
+        }
+        s.put('}');
+        return s.data;
     }
 
     /// Maps are not quoted inside arrays.

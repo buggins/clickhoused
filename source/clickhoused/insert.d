@@ -172,6 +172,7 @@ final class Inserter
         if (current is null)
             current = newBlock();
         const rows = current.rows;
+        const bytes = currentBytes;
         try
         {
             foreach (i, ref value; values)
@@ -180,10 +181,9 @@ final class Inserter
                 currentBytes += estimateSize(value);
             }
         }
-        catch (ClientException e)
+        catch (Exception e)
         {
-            foreach (c; current.columns)
-                c.truncate(rows);
+            rollBack(rows, bytes); // any error: a half-added row would break the block
             throw e;
         }
         current.rows++;
@@ -214,6 +214,7 @@ final class Inserter
             structType = typeid(T);
         }
         const rows = current.rows;
+        const bytes = currentBytes;
         try
         {
             size_t k;
@@ -226,15 +227,22 @@ final class Inserter
                 }
             }
         }
-        catch (ClientException e)
+        catch (Exception e)
         {
-            foreach (c; current.columns)
-                c.truncate(rows);
+            rollBack(rows, bytes); // any error: a half-added row would break the block
             throw e;
         }
         current.rows++;
         if (current.rows >= maxBlockRows || currentBytes >= maxBlockBytes)
             flush();
+    }
+
+    // Takes the current block back to `rows` rows and `bytes` estimated bytes
+    private void rollBack(size_t rows, size_t bytes) @safe
+    {
+        foreach (c; current.columns)
+            c.truncate(rows);
+        currentBytes = bytes;
     }
 
     /// Sends the rows buffered by `addRow`, if any.
@@ -246,7 +254,7 @@ final class Inserter
         auto block = current;
         current = null;
         currentBytes = 0;
-        send(block);
+        sendOrdered(block); // made by newBlock: no need to match it against the header
     }
 
     /++
@@ -262,9 +270,20 @@ final class Inserter
     void send(Block block) @safe
     {
         checkActive();
-        auto ordered = matchHeader(block);
+        sendOrdered(matchHeader(block));
+    }
+
+    // Sends a block whose columns are the header's, in its order (from matchHeader or newBlock)
+    private void sendOrdered(Block ordered) @safe
+    {
         if (ordered.rows == 0)
             return; // an empty block would end the insert
+        // Checked before writing, outside guarded: a column of another length would break the stream
+        foreach (c; ordered.columns)
+            if (c.length != ordered.rows)
+                throw new ClientException("Column '" ~ c.name ~ "' has " ~ toText(
+                        c.length) ~ " rows, the block has "
+                        ~ toText(ordered.rows));
         conn.guarded({
             writeDataHeader(conn.writer);
             writeBlock(conn.blockWriter, ordered, conn.effectiveRevision);
@@ -537,9 +556,24 @@ unittest
     s.block(ServerPacket.data, insertHeader());
     s.send();
     auto ins = conn.beginInsert("INSERT INTO t (x, s) VALUES");
+    // A value that fails with another exception (std.json can't write NaN) doesn't leave half a row
+    import std.exception : collectException;
+    import std.json : JSONValue;
+
+    const error = collectException(ins.addRow(Variant(1), JSONValue(double.nan)));
+    assert(error !is null && cast(const ClientException) error is null); // not a ClientException
+    assert(ins.current.rows == 0 && ins.current.columns[0].length == 0 && ins.current.columns[1].length == 0);
     ins.addRow(Variant(7), Variant("v"));
     ins.addRow(Variant(8), Variant.init); // an empty Variant is NULL
     assert(ins.current.rows == 2 && ins.current.columns[0].getLong(0) == 7 && ins.current.columns[1].isNull(1));
+
+    // A value that fails with another exception than ClientException (here JSONException:
+    // NaN has no JSON text) takes the whole row back too
+    import std.exception : collectException;
+    import std.json : JSONValue;
+
+    assert(collectException(ins.addRow(9, JSONValue(double.nan))) !is null);
+    assert(ins.current.rows == 2 && ins.current.columns[0].length == 2 && ins.current.columns[1].length == 2);
     ins.abort();
 }
 
