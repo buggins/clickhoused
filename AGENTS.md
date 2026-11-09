@@ -53,7 +53,7 @@ clickhoused must remain pure BSL-1.0 code written for this project.
 
 ## dbwire
 
-clickhoused builds on **dbwire** (`../dbwire`, https://github.com/buggins/dbwire, dub `dbwire:types`, `:io`, `:tls`, `:client`, `~>0.9.0`): the parts that are not ClickHouse-specific, shared with the planned SQL Server and Oracle connectors. Moved there in 0.9 (#59): the I/O layer, `BufferedReader`/`BufferedWriter`, TLS and the OpenSSL loader, `Int128`…`UInt256`, `Decimal`, `resolveTimeZone`, the base exceptions, `HostPort`/`HostSelection`/DSN parsing/failover (`connectFirst`), and the pool logic (`PoolCore`).
+clickhoused builds on **dbwire** (`../dbwire`, https://github.com/buggins/dbwire, dub `dbwire:types`, `:io`, `:tls`, `:client`, `~>0.9.1`): the parts that are not ClickHouse-specific, shared with the planned SQL Server and Oracle connectors. Moved there in 0.9 (#59): the I/O layer, `BufferedReader`/`BufferedWriter`, TLS and the OpenSSL loader, `Int128`…`UInt256`, `Decimal`, `resolveTimeZone`, the base exceptions, `HostPort`/`HostSelection`/DSN parsing/failover (`connectFirst`), and the pool logic (`PoolCore`); in dbwire 0.9.1 (#75) the shortest float digits (`shortestDigits`).
 - Changes to moved code go to dbwire: an issue and PR there (it has its own AGENTS.md and the same workflow), a dbwire release, then the version bump here.
 - To build clickhoused against a local dbwire checkout: `dub add-local ../dbwire <version>` (the version the constraint expects, e.g. `0.9.0`), and `dub remove-local ../dbwire` afterwards. Never commit a `path` dependency.
 - The old clickhoused module paths re-export the moved symbols through 0.9.x (whether 1.0 keeps them is open).
@@ -296,7 +296,7 @@ Column conventions:
   - Conversions are range-checked, and a failed append must leave the column unchanged.
   - `appendString` for DateTime types parses the text in the column timezone.
 
-Float text: the server writes floats as the shortest decimal that reads back exactly (dragonbox/zmij), in plain notation when the decimal point position n (value = 0.digits × 10^n) satisfies -6 < n <= 21, else `d.ddde-7` (no `+`); every NaN is `nan`, negative zero `-0`. `formatFloat` (`types/floattext.d`) reproduces it with exact big-integer digit generation; it was checked against ~765k server values (same on 23.8 and 26.x).
+Float text: the server writes floats as the shortest decimal that reads back exactly (dragonbox/zmij), in plain notation when the decimal point position n (value = 0.digits × 10^n) satisfies -6 < n <= 21, else `d.ddde-7` (no `+`); every NaN is `nan`, negative zero `-0`. `formatFloat` (`types/floattext.d`) reproduces it with dbwire's `shortestDigits` (exact digit generation, moved to dbwire in 0.9.1, #75) and ClickHouse's layout; it was checked against ~765k server values (same on 23.8 and 26.x).
 
 Time (#21): `Time` is an `Int32` of seconds, `Time64(p)` an `Int64` of 10^-p second ticks (a Decimal64 on the server, p 0 to 9). Signed spans within ±999:59:59 (server conversions saturate there; our appenders throw). Text `[-]hh:mm:ss[.fff]`: 2 hour digits, 3 from 100 hours on, exactly p fraction digits, sign kept for `-00:00:00.25`; quoted inside arrays. The server parses `h:mm:ss` (1–3 hour digits), `m:ss`, `s`, without checking minutes/seconds against 60. Since 25.6; before 25.12 it needs `enable_time_time64_type=1` (the tests `SET` it), and on 25.x `toTime` is an older, different function: use `CAST(x AS Time)`.
 
