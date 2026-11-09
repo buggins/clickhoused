@@ -12,7 +12,8 @@ All notable changes to this project are documented here. The project follows [Se
 - `appendVariant` takes the `Variant` by `ref const` and is `@safe` (#71); an overload for temporaries remains.
 - `zstdCompress` failures are a `ClientException` (a local failure), no longer a `ProtocolException` (#71).
 - An exception thrown by `onProgress`, `onProfileEvents` or `onLog` closes the connection; this is now documented (#71).
-- dbwire 0.9 (`~>0.9.0`, #67). It brings:
+- dbwire 0.9 (`~>0.9.1`, #67, #75). It brings:
+  - the shortest float digits (`shortestDigits`) behind the float text, moved from clickhoused (#75): the same text, one allocation fewer per value;
   - faster charset conversions;
   - fewer allocations in `Decimal.toString` (`DecimalColumn.getString`) and none in `Decimal.toHash`;
   - a correctly rounded `Decimal.toDouble` (`DecimalColumn.getDouble`);
