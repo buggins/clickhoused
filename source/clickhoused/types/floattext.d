@@ -9,7 +9,8 @@ License:   $(LINK2 https://www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 +/
 module clickhoused.types.floattext;
 
-import dbwire.types.floattext : digits, shortestDigits;
+import dbwire.types.floattext : FloatLayout, formatDigits, shortestDigits;
+import dbwire.types.text : TextBuffer;
 
 /++
 `value` as ClickHouse formats a `Float32` (for `float`) or `Float64` (for
@@ -23,21 +24,21 @@ package(clickhoused) string formatFloat(T)(T value) @safe pure if (is(T == float
         return "nan";
     if (isInfinity(value))
         return value > 0 ? "inf" : "-inf";
-    const sign = signbit(value) ? "-" : "";
+    const negative = signbit(value) != 0;
     if (value == 0)
-        return sign ~ "0";
+        return negative ? "-0" : "0";
 
     // Whole numbers below 2^53 (2^24 for float) are exact, and their digits are the shortest text
     enum T exactLimit = 2.0 ^^ (T.mant_dig);
     if (value > -exactLimit && value < exactLimit && value == cast(long) value)
     {
-        import std.conv : to;
-
-        return sign ~ (value < 0 ? -cast(long) value : cast(long) value).to!string;
+        TextBuffer!24 t;
+        if (negative)
+            t.put('-');
+        t.number(value < 0 ? -cast(long) value : cast(long) value);
+        return t.text;
     }
-
-    const d = shortestDigits(value);
-    return sign ~ layout(d.digits, d.pointPos);
+    return formatDigits(shortestDigits(value), negative, clickHouseLayout);
 }
 
 ///
@@ -54,25 +55,11 @@ package(clickhoused) string formatFloat(T)(T value) @safe pure if (is(T == float
 }
 
 /++
-Lays out `digits` with the decimal point at `pointPos` (the value is
-`0.digits × 10^pointPos`) the way ClickHouse does: plain notation when
-`-6 < pointPos <= 21`, otherwise one digit, the rest after a point, and `e`
-with the exponent.
+ClickHouse's layout: plain notation when the decimal exponent X (the value is
+d.ddd × 10^X) is from -6 to 20, otherwise one digit, the rest after a point,
+and `e` with the exponent, without `+` or padding (`1e-7`, `1.5e21`).
 +/
-private string layout(scope const(char)[] digits, int pointPos) @safe pure
-{
-    import std.array : replicate;
-    import std.conv : to;
-
-    const n = cast(int) digits.length;
-    if (pointPos >= n && pointPos <= 21)
-        return digits ~ "0".replicate(pointPos - n);
-    if (pointPos > 0 && pointPos <= 21)
-        return digits[0 .. pointPos] ~ "." ~ digits[pointPos .. $];
-    if (pointPos > -6 && pointPos <= 0)
-        return "0." ~ "0".replicate(-pointPos) ~ digits;
-    return digits[0 .. 1] ~ (n > 1 ? "." ~ digits[1 .. $] : "") ~ "e" ~ (pointPos - 1).to!string;
-}
+private enum clickHouseLayout = FloatLayout(-6, 21, false, false, 1);
 
 @safe unittest
 {
