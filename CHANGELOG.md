@@ -20,6 +20,7 @@ All notable changes to this project are documented here. The project follows [Se
   - no leaked OpenSSL context when certificates or keys fail to load;
   - the next host tried when a socket can't be created;
   - builds with `-preview=dip1000`.
+- dbwire `~>0.9.3` (#77): String values whose announced length is above 1 MiB are read as the data arrives, so a server (or anything in between) can't make the client allocate a length it never sends; float text 4 to 5 times faster outside about 1e-20…1e35, without allocating; float text laid out by dbwire's `formatDigits` (the same text, about 15% faster with fewer allocations in `getString` of `Float64`); a `?password=` in a DSN is masked in error messages.
 - `ConnectionOptions.connectTimeout` (`connect_timeout` in a DSN): `Duration.zero` (`0`) now means no limit. It used to fail at once.
 - `Connection.cancel` (#69) is now kept apart from the client's own packets by a lock. A cancel made while the query is still being sent goes out right after it, instead of inside it. A late cancel no longer reaches the server during the next query, where it silently emptied or truncated that query's result.
 - New limits on what the server can send (#69):
