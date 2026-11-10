@@ -4,6 +4,10 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+## 0.9.1 — 2026-11-10
+
+The second 0.9.x release candidate: the fixes and improvements from a code review (robustness and thread safety #69, performance #70, attributes, D idioms and dip1000 #71, float text #75) and dbwire 0.9 (#67, #77).
+
 ### Changed
 - `ConnectionOptions` (#71):
   - `yield_between_blocks` also accepts `1`/`0` like the other flags, in any case as before;
