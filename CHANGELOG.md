@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+## 0.9.2 — 2026-11-12
+
+dbwire 0.9.6: a `PooledConnection` collected by the garbage collector no
+longer crashes.
+
 ### Fixed
 
 - dbwire 0.9.6 (#81): a `PooledConnection` finalized by the GC (a field of an
