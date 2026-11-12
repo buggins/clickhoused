@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+### Fixed
+
+- dbwire 0.9.6 (#81): a `PooledConnection` finalized by the GC (a field of an
+  object nobody references) no longer returns its connection from the
+  finalizer, which called into a pool that may be finalized already (at exit:
+  a segfault). The connection stays checked out; call `release` before
+  dropping an object that holds one (dbwire#79).
+
 ## 0.9.1 — 2026-11-10
 
 The second 0.9.x release candidate: the fixes and improvements from a code review (robustness and thread safety #69, performance #70, attributes, D idioms and dip1000 #71, float text #75) and dbwire 0.9 (#67, #77).

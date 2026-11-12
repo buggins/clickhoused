@@ -110,6 +110,11 @@ final class ConnectionPool
 A connection taken from a `ConnectionPool`. It behaves like the `Connection`
 itself and returns it to the pool when it goes out of scope (or on `release`).
 It cannot be copied.
+
+Call `release` before dropping an object that holds a `PooledConnection`: one
+the garbage collector finalizes can't touch the pool, which may be finalized
+already, so the connection is never returned (its slot stays taken and it
+stays open until the process ends).
 +/
 struct PooledConnection
 {
