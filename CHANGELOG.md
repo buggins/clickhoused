@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+### Added
+
+- The I/O mode option can also be given as `io_mode`, its main name in all
+  connectors (buggins/dbwire#83, #85); `io` stays as the short form. `io_mode` was
+  sent to the server as a setting until now (ClickHouse has no such setting).
+  Giving both with different values is an error. Requires dbwire 0.9.8.
+
 ## 0.9.2 — 2026-11-12
 
 dbwire 0.9.6: a `PooledConnection` collected by the garbage collector no
