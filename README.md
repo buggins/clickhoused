@@ -77,7 +77,7 @@ auto conn = new Connection("clickhouse://user:password@host1:9000,host2:9000/db?
 ```
 
 - **Several hosts** are tried in order, and the first that answers is used. Add `host_selection=random` to spread connections over them.
-- **Options:** `compress` (`none`, `lz4`, `zstd`), `connect_timeout`, `send_timeout`, `receive_timeout` (seconds), `io` (`auto`, `phobos`, `vibe`), `client_name`, `quota_key`, and the [TLS](#tls) options (`secure`, ...).
+- **Options:** `compress` (`none`, `lz4`, `zstd`), `connect_timeout`, `send_timeout`, `receive_timeout` (seconds), `io_mode` or `io` (`auto`, `phobos`, `vibe`), `client_name`, `quota_key`, and the [TLS](#tls) options (`secure`, ...).
 - **Ports** default to 9000, or 9440 with `secure=true`.
 - **Settings:** any other parameter is sent to the server as a setting.
 

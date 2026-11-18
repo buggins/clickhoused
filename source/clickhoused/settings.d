@@ -18,7 +18,7 @@ import clickhoused.exception : ClientException;
 import clickhoused.io.backend : IoMode;
 import clickhoused.io.tls : TlsOptions;
 import clickhoused.io.transport : TransportFactory;
-import dbwire.client.dsn : Dsn, parseEnumValue, parseFlag, parseSeconds;
+import dbwire.client.dsn : Dsn, parseEnumValue, parseFlag, parseIoMode, parseSeconds;
 
 /// Moved to `dbwire.client.hosts` (package dbwire) in 0.9; re-exported here.
 public import dbwire.client.hosts : HostPort, HostSelection;
@@ -132,7 +132,7 @@ struct ConnectionOptions
         $(LI `compress`: `none`, `lz4` or `zstd` (`true` means `lz4`);)
         $(LI `zstd_level`;)
         $(LI `connect_timeout`, `send_timeout`, `receive_timeout`: seconds, may be fractional;)
-        $(LI `io`: `auto`, `phobos` or `vibe`;)
+        $(LI `io_mode` (or `io`): `auto`, `phobos` or `vibe`;)
         $(LI `host_selection`: `in_order` or `random`;)
         $(LI `client_name`, `quota_key`, `yield_between_blocks`, `simple_native_formats` (`true`/`false`);)
         $(LI `secure` (or `tls`): `true`/`1` to connect over TLS; the default port becomes 9440;)
@@ -202,6 +202,7 @@ struct ConnectionOptions
         import std.conv : ConvException, to;
         import std.uni : toLower;
 
+        checkIoModeKeys(params);
         ConnectionOptions options;
         foreach (key, value; params)
         {
@@ -266,8 +267,9 @@ struct ConnectionOptions
             case "receive_timeout":
                 options.receiveTimeout = parseSeconds(key, value);
                 break;
+            case "io_mode":
             case "io":
-                options.ioMode = value == "auto" ? IoMode.auto_ : parseEnumValue!IoMode(key, value);
+                options.ioMode = parseIoMode(key, value);
                 break;
             case "host_selection":
                 options.hostSelection = value == "in_order" ? HostSelection.inOrder
@@ -360,7 +362,8 @@ struct ConnectionOptions
     foreach (bad; [
         "http://h", "clickhouse://", "clickhouse://h:notaport", "clickhouse://h:99999",
         "clickhouse://h?compress=x",
-        "clickhouse://h?connect_timeout=-1", "clickhouse://h?io=threads", "clickhouse://h?secure=yes",
+        "clickhouse://h?connect_timeout=-1", "clickhouse://h?io=threads",
+        "clickhouse://h?secure=yes",
         "clickhouse://h?skip_verify=2", "clickhouse://h?zstd_level=0", "clickhouse://h?zstd_level=23",
         "clickhouse://h?yield_between_blocks=maybe",
         "clickhouse://[::1", "clickhouse://h?x=%zz",
@@ -379,4 +382,28 @@ struct ConnectionOptions
     options.password = "secret";
     options.settings["max_execution_time"] = "60";
     assert(options.effectivePort(options.port) == 9000 && options.database == "default");
+}
+
+// The I/O mode: `io_mode`, or `io` for short, as in every connector (buggins/dbwire#83)
+@safe unittest
+{
+    import std.exception : collectExceptionMsg;
+
+    assert(ConnectionOptions.fromDsn("clickhouse://h?io_mode=vibe").ioMode == IoMode.vibe);
+    assert(ConnectionOptions.fromDsn("clickhouse://h?io=vibe").ioMode == IoMode.vibe);
+    assert(ConnectionOptions.fromDsn("clickhouse://h?io=phobos&io_mode=phobos").ioMode == IoMode.phobos);
+    auto message = collectExceptionMsg(ConnectionOptions.fromDsn("clickhouse://h?io=vibe&io_mode=phobos"));
+    assert(message == "'io' and 'io_mode' give different I/O modes ('vibe' and 'phobos')", message);
+    message = collectExceptionMsg(ConnectionOptions.fromDsn("clickhouse://h?io=fibers"));
+    assert(message == "Invalid value 'fibers' for 'io' (auto, phobos or vibe expected)", message);
+}
+
+// `io` is the short form of `io_mode` (buggins/dbwire#83); different values for both are an error,
+// rather than the associative array's order deciding
+private void checkIoModeKeys(const string[string] params) @safe
+{
+    const io = "io" in params;
+    const ioMode = "io_mode" in params;
+    if (io !is null && ioMode !is null && *io != *ioMode)
+        throw new ClientException("'io' and 'io_mode' give different I/O modes ('" ~ *io ~ "' and '" ~ *ioMode ~ "')");
 }
