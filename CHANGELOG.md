@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+## 0.9.3 — 2026-11-18
+
+The I/O mode option is also accepted as `io_mode`, its main name in all
+connectors; dbwire 0.9.8.
+
 ### Added
 
 - The I/O mode option can also be given as `io_mode`, its main name in all
