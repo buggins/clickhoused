@@ -18,7 +18,7 @@ import clickhoused.exception : ClientException;
 import clickhoused.io.backend : IoMode;
 import clickhoused.io.tls : TlsOptions;
 import clickhoused.io.transport : TransportFactory;
-import dbwire.client.dsn : Dsn, parseEnumValue, parseFlag, parseIoMode, parseSeconds;
+import dbwire.client.dsn : checkIoModeKeys, Dsn, parseEnumValue, parseFlag, parseIoMode, parseSeconds;
 
 /// Moved to `dbwire.client.hosts` (package dbwire) in 0.9; re-exported here.
 public import dbwire.client.hosts : HostPort, HostSelection;
@@ -132,7 +132,7 @@ struct ConnectionOptions
         $(LI `compress`: `none`, `lz4` or `zstd` (`true` means `lz4`);)
         $(LI `zstd_level`;)
         $(LI `connect_timeout`, `send_timeout`, `receive_timeout`: seconds, may be fractional;)
-        $(LI `io_mode` (or `io`): `auto`, `phobos` or `vibe`;)
+        $(LI `io_mode` (or `io`): `auto`, `phobos` or `vibe`; both keys may be given only with the same mode;)
         $(LI `host_selection`: `in_order` or `random`;)
         $(LI `client_name`, `quota_key`, `yield_between_blocks`, `simple_native_formats` (`true`/`false`);)
         $(LI `secure` (or `tls`): `true`/`1` to connect over TLS; the default port becomes 9440;)
@@ -144,7 +144,8 @@ struct ConnectionOptions
     )
     Any other parameter is sent to the server as a setting, e.g. `max_threads=4`.
 
-    Throws: `ClientException` if the string is malformed or a value is invalid.
+    Throws: `ClientException` if the string is malformed or a value is invalid,
+    or if `io` and `io_mode` give different modes.
     +/
     static ConnectionOptions fromDsn(string dsn) @safe
     {
@@ -194,7 +195,8 @@ struct ConnectionOptions
     Keys: `host`, `port`, `user`, `password`, `database` (or `dbname`), plus
     the parameters described in `fromDsn`. Other keys become server settings.
 
-    Throws: `ClientException` if a value is invalid.
+    Throws: `ClientException` if a value is invalid, or if `io` and `io_mode`
+    give different modes.
     +/
     static ConnectionOptions fromParams(const string[string] params) @safe
     {
@@ -387,7 +389,7 @@ struct ConnectionOptions
 // The I/O mode: `io_mode`, or `io` for short, as in every connector (buggins/dbwire#83)
 @safe unittest
 {
-    import std.exception : collectExceptionMsg;
+    import std.exception : assertNotThrown, collectExceptionMsg;
 
     assert(ConnectionOptions.fromDsn("clickhouse://h?io_mode=vibe").ioMode == IoMode.vibe);
     assert(ConnectionOptions.fromDsn("clickhouse://h?io=vibe").ioMode == IoMode.vibe);
@@ -396,14 +398,12 @@ struct ConnectionOptions
     assert(message == "'io' and 'io_mode' give different I/O modes ('vibe' and 'phobos')", message);
     message = collectExceptionMsg(ConnectionOptions.fromDsn("clickhouse://h?io=fibers"));
     assert(message == "Invalid value 'fibers' for 'io' (auto, phobos or vibe expected)", message);
-}
-
-// `io` is the short form of `io_mode` (buggins/dbwire#83); different values for both are an error,
-// rather than the associative array's order deciding
-private void checkIoModeKeys(const string[string] params) @safe
-{
-    const io = "io" in params;
-    const ioMode = "io_mode" in params;
-    if (io !is null && ioMode !is null && *io != *ioMode)
-        throw new ClientException("'io' and 'io_mode' give different I/O modes ('" ~ *io ~ "' and '" ~ *ioMode ~ "')");
+    // the modes are compared, not the text (#89): auto and auto_ are the same mode
+    assertNotThrown(ConnectionOptions.fromDsn("clickhouse://h?io=auto&io_mode=auto_"));
+    assert(ConnectionOptions.fromDsn("clickhouse://h?io=vibe&io_mode=vibe").ioMode == IoMode.vibe);
+    // an invalid value is reported as such, not as a conflict
+    message = collectExceptionMsg(ConnectionOptions.fromDsn("clickhouse://h?io=fibers&io_mode=phobos"));
+    assert(message == "Invalid value 'fibers' for 'io' (auto, phobos or vibe expected)", message);
+    message = collectExceptionMsg(ConnectionOptions.fromDsn("clickhouse://h?io=vibe&io_mode=threads"));
+    assert(message == "Invalid value 'threads' for 'io_mode' (auto, phobos or vibe expected)", message);
 }
