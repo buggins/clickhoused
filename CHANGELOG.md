@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+## 0.9.4 — 2026-11-23
+
+`io` and `io_mode` given together: the modes are compared, not the text, with
+dbwire's shared check; dbwire 0.9.9.
+
 ### Fixed
 
 - `io` and `io_mode` given together: the modes are compared, not the text, so
