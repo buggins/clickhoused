@@ -4,6 +4,11 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+## 0.9.5 — 2026-11-26
+
+A cancelled query no longer looks complete: `QueryResult.cancelled`; dbwire
+0.9.10.
+
 ### Added
 
 - `QueryResult.cancelled` and `QueryStats.cancelled` (also in the statistics
@@ -14,6 +19,11 @@ All notable changes to this project are documented here. The project follows [Se
   with its profiling summary, a cancelled one without. Statements that never
   get a summary (DDL, `INSERT ... SELECT`) count as cancelled after any
   cancel.
+
+### Fixed
+
+- Inserts over TLS: the check for the server's packets between blocks missed
+  records already received; fixed in dbwire `~>0.9.10` (buggins/dbwire#103).
 
 ## 0.9.4 — 2026-11-23
 
