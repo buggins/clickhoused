@@ -43,6 +43,27 @@ struct QueryStats
     Progress progress;
     /// Profiling summary; filled in when the server sends it near the end of the query.
     ProfileInfo profileInfo;
+    /++
+    Whether a cancel cut the query short: this client sent a Cancel (through
+    `Connection.cancel` or `QueryResult.close`) and the server ended the query
+    without finishing it. The server answers a cancel with a normal end of the
+    result, so without this flag a cancelled result looks complete. A cancel
+    that reached the server after the query had finished leaves it false.
+
+    Set when the result ends. Statements whose result has no profiling summary
+    (DDL, `INSERT ... SELECT`; the server sends none for them) can't be told
+    apart from a finished one: after a cancel they count as cancelled. With
+    the server setting `partial_result_on_first_cancel`, the server may end the
+    query at the first cancel as a finished one, with the rows read so far
+    (23.8 does, 26.x doesn't): the flag then stays false.
+
+    It says something only about a result that ended: when an error closes
+    the connection first (a timeout, a reset), the result stops with that
+    exception and the flag stays false. Always false in the statistics of
+    `Inserter.finish`: an insert can't be cancelled (`Inserter.abort` closes
+    the connection).
+    +/
+    bool cancelled;
 }
 
 /++
@@ -90,6 +111,7 @@ final class Connection : Poolable
 
     private QueryPhase queryPhase;
     private bool cancelPending; // cancel() was called while writing
+    private bool cancelSent; // a Cancel went out for the current query
     private IoLock cancelLock;
     package BufferedReader reader;
     package BufferedWriter writer;
@@ -201,12 +223,19 @@ final class Connection : Poolable
 
     /++
     Asks the server to stop the running query. The result then ends early:
-    reading it further returns the blocks already in flight, then finishes.
+    reading it further returns the blocks already in flight, then finishes as
+    if it were complete; `QueryResult.cancelled` (`QueryStats.cancelled`, also
+    from `exec`) tells that the query was cut short.
 
     This is the one method that may be called from another thread (thread mode)
     or another task on the same thread (fiber mode) while a query runs. A cancel
     made while the query is still being sent goes out right after it. It does
     nothing if no query is running.
+
+    A cancel acts on the query running when it is made: one meant for a query
+    that has just ended stops the next one, if the connection has started it
+    meanwhile, and that result then reports `cancelled`. Coordinate the
+    threads or tasks when that matters.
 
     Throws: `ClientException` during an INSERT (use `Inserter.abort`);
     `ConnectionException` if the request cannot be sent.
@@ -237,6 +266,7 @@ final class Connection : Poolable
     {
         static immutable ubyte[1] packet = [cast(ubyte) ClientPacket.cancel];
         transport.write(packet[]);
+        cancelSent = true;
     }
 
     /// Starts writing a query, or a packet while its result is read: a cancel waits until `endWriting`.
@@ -260,13 +290,20 @@ final class Connection : Poolable
         queryPhase = QueryPhase.reading;
     }
 
-    /// The query is over: nothing left to cancel.
-    package void endQuery() @safe nothrow
+    /++
+    The query is over: nothing left to cancel.
+
+    Returns: whether a Cancel was sent for it.
+    +/
+    package bool endQuery() @safe nothrow
     {
-        void reset() @safe nothrow
+        bool reset() @safe nothrow
         {
+            const sent = cancelSent;
             queryPhase = QueryPhase.none;
             cancelPending = false;
+            cancelSent = false;
+            return sent;
         }
 
         if (cancelLock is null)
@@ -276,10 +313,10 @@ final class Connection : Poolable
             cancelLock.lock();
             scope (exit)
                 cancelLock.unlock();
-            reset();
+            return reset();
         }
         catch (Exception)
-            reset(); // the lock failed (the backends' locks don't throw); nothing can be cancelled anyway
+            return reset(); // the lock failed (the backends' locks don't throw); nothing can be cancelled anyway
     }
 
     /// Closes the connection. Calling it more than once is allowed.
@@ -750,6 +787,7 @@ final class QueryResult
     private Block current;
     private bool finished;
     private bool insertWithoutData;
+    private bool finishedNormally; // the server sent the profiling summary of a query that ran to its end
 
     /// Column names and types, without rows. Null until the server sends them
     /// (some statements, e.g. DDL, have no result columns at all).
@@ -797,9 +835,19 @@ final class QueryResult
     }
 
     /++
+    Whether a cancel cut the query short (`stats.cancelled`): the result ended
+    early, although it ended like a complete one. False until the result ends.
+    +/
+    @property bool cancelled() const @safe pure nothrow
+    {
+        return stats.cancelled;
+    }
+
+    /++
     Stops reading: cancels the query if it is still running, discards what the
     server already sent, and frees the connection. Server errors in the
     discarded part are ignored. Does nothing if the result is finished.
+    `cancelled` then tells whether the cancel stopped the query.
     +/
     void close() @safe
     {
@@ -888,6 +936,9 @@ final class QueryResult
                 default:
                     if (!conn.readInfoPacket(packet, stats))
                         throw Connection.unexpectedPacket(packet, "query result");
+                    // sent only when the query ran to its end, not when a cancel stopped it
+                    if (packet == ServerPacket.profileInfo)
+                        finishedNormally = true;
                 }
             }
         });
@@ -904,7 +955,7 @@ final class QueryResult
 
     private void finish() @safe nothrow
     {
-        conn.endQuery();
+        stats.cancelled = conn.endQuery() && !finishedNormally;
         finished = true;
         if (conn.state == Connection.State.busy)
             conn.state = Connection.State.ready;
@@ -1044,6 +1095,97 @@ version (unittest)
     assertThrown!ClientException(conn.cancel());
     ins.abort();
     conn.cancel(); // the insert is over (and the connection closed): nothing to refuse
+}
+
+@safe unittest
+{
+    // QueryStats.cancelled: a cancel that stopped the query, not one that came after its end (#94)
+    auto s = new ScriptedServer;
+    s.hello();
+    auto conn = s.connect();
+
+    // stopped by the cancel: the server ends without the profiling summary
+    s.dataBlock([1]);
+    s.endOfStream();
+    s.send();
+    auto result = conn.query("SELECT 1");
+    assert(!result.empty && !result.cancelled);
+    conn.cancel();
+    result.drain();
+    assert(result.cancelled && result.stats.cancelled);
+
+    // the next query starts afresh, and a finished query isn't cancelled
+    s.dataBlock([1]);
+    s.profileInfo(1);
+    s.endOfStream();
+    s.send();
+    result = conn.query("SELECT 1");
+    result.drain();
+    assert(!result.cancelled);
+
+    // a cancel that reached the server after the query had finished: the summary came
+    s.dataBlock([1]);
+    s.profileInfo(1);
+    s.endOfStream();
+    s.send();
+    result = conn.query("SELECT 1");
+    assert(!result.empty);
+    conn.cancel();
+    result.drain();
+    assert(!result.cancelled && result.stats.profileInfo.rows == 1);
+
+    // close() of a running query
+    s.dataBlock([1]);
+    s.endOfStream();
+    s.send();
+    result = conn.query("SELECT 1");
+    assert(!result.empty);
+    result.close();
+    assert(result.cancelled);
+
+    // close() of a finished result sends nothing and keeps the flag
+    s.dataBlock([1]);
+    s.profileInfo(1);
+    s.endOfStream();
+    s.send();
+    result = conn.query("SELECT 1");
+    result.drain();
+    s.transport.clearWritten();
+    result.close();
+    assert(!result.cancelled && s.transport.written.length == 0);
+
+    // no cancel, no summary (DDL)
+    s.endOfStream();
+    s.send();
+    assert(!conn.exec("CREATE TABLE t (x UInt8) ENGINE = Memory").cancelled);
+}
+
+@safe unittest
+{
+    // exec reports a cancel from another task or thread in its statistics (#94)
+    auto s = new ScriptedServer;
+    s.hello();
+    s.send();
+    auto t = new ReentrantTransport(s.transport);
+    ConnectionOptions options;
+    options.transportFactory = (host, port, timeout) => cast(Transport) t;
+    auto conn = new Connection(options);
+    // stopped by the cancel: no profiling summary
+    s.dataBlock([1]);
+    s.endOfStream();
+    s.send();
+    t.onRead = () { conn.cancel(); };
+    assert(conn.exec("SELECT 1").cancelled);
+    assert(t.onRead is null && !conn.isBusy);
+
+    // the query had finished: the summary came, the late cancel doesn't count
+    s.dataBlock([1]);
+    s.profileInfo(1);
+    s.endOfStream();
+    s.send();
+    t.onRead = () { conn.cancel(); };
+    const stats = conn.exec("SELECT 1");
+    assert(t.onRead is null && !stats.cancelled && stats.profileInfo.rows == 1);
 }
 
 @safe unittest

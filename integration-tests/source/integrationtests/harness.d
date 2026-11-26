@@ -81,6 +81,7 @@ immutable TestCase[] allTests = [
     TestCase("network compression", &testCompression, true),
     TestCase("automatic I/O backend", &testIoBackendSelection, true),
     TestCase("close() cancels the query", &testCloseCancelsQuery, true),
+    TestCase("cancelled flag: finished results and late cancels", &testCancelledFlag, true),
     TestCase("connection string", &testDsnConnect, true),
     TestCase("host failover", &testFailover, true),
     TestCase("pool: reuse", &testPoolReuse, true),

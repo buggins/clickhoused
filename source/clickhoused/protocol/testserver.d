@@ -85,6 +85,17 @@ package(clickhoused) final class ScriptedServer
             w.writeUVarInt(v);
     }
 
+    /// A profiling summary, which the server sends when a query ran to its end.
+    void profileInfo(ulong rows) @safe
+    {
+        w.writeUVarInt(ServerPacket.profileInfo);
+        foreach (v; [rows, 1, rows * 8])
+            w.writeUVarInt(v);
+        w.writeFixed(false);
+        w.writeUVarInt(0);
+        w.writeFixed(false);
+    }
+
     /// An exception packet.
     void exception(int code, string message) @safe
     {

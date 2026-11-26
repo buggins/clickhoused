@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The project follows [Se
 
 ## Unreleased
 
+### Added
+
+- `QueryResult.cancelled` and `QueryStats.cancelled` (also in the statistics
+  `exec` returns): whether a cancel (`Connection.cancel`, `QueryResult.close`)
+  cut the query short. The server answers a cancel with a normal end of the
+  result, so a cancelled result looked complete (#94). A cancel that reaches
+  the server after the query has finished leaves it false: such a query ends
+  with its profiling summary, a cancelled one without. Statements that never
+  get a summary (DDL, `INSERT ... SELECT`) count as cancelled after any
+  cancel.
+
 ## 0.9.4 — 2026-11-23
 
 `io` and `io_mode` given together: the modes are compared, not the text, with

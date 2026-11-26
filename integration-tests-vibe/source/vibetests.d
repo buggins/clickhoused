@@ -104,6 +104,7 @@ void testCancelFromTask()
         rows += block.rows;
     canceller.join();
     enforce(rows > 0 && result.isFinished && conn.isOpen && !conn.isBusy, "state after cancel");
+    enforce(result.cancelled, "the cut result isn't marked cancelled");
     conn.ping();
 }
 
