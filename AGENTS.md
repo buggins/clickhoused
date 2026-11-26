@@ -243,6 +243,7 @@ Don't modify any of these repositories unless the user explicitly asks.
   - `Connection.cancel()` writes the 1-byte Cancel packet straight to the transport. It's safe from another thread/task while a result is being read, and refused during an insert.
   - The server answers a cancel with `EndOfStream` and ignores a Cancel that arrives when no query is running.
   - `QueryResult.close()` cancels and discards (server errors ignored); `QueryResult.drain()` reads to the end without cancelling. `exec()` uses `drain()`: never cancel a DDL statement.
+  - A cancelled query ends exactly like a complete one (`EndOfStream`, no error), except that the server skips the `ProfileInfo` packet: it sends it only when the query ran to its end (checked on 23.8 and 26.12). `QueryStats.cancelled` = a Cancel was sent and no `ProfileInfo` came (#94). DDL and `INSERT ... SELECT` never get a `ProfileInfo`; with `partial_result_on_first_cancel = 1`, 23.8 ends the first cancel with the partial rows and a `ProfileInfo`, 26.12 without.
 - **Connection strings and failover (M5b):**
   - DSN: `clickhouse://user:pass@h1:9000,h2/db?param=...`. Known parameters are options; `pool_*` parameters are for `PoolOptions.fromDsn`; anything else becomes a server setting.
   - `secure`/`tls` turn on TLS (`ConnectionOptions.secure`, `tls`: CA file, client certificate, server name, `skip_verify`). The port defaults to 0, meaning 9000, or 9440 with TLS; `Connection.host` reports the port in use.
